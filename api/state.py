@@ -30,6 +30,20 @@ class AppState:
         self.strategy = "escadinha"
         self.asset = "EURUSD-OTC"
         self.timeframe = 60
+        self.valor_entrada = 2.0
+        self.expiracao = 1
+        self.min_velas = 3
+        self.ema_rapida = 9
+        self.ema_lenta = 21
+        self.usar_filtro_ema = True
+        self.micro_mult = 5
+        self.macro_mult = 15
+        self.exigir_confluencia = True
+        self.usar_martingale = True
+        self.niveis_martingale = 2
+        self.fator_martingale = 2.0
+        self.usar_soros = True
+        self.niveis_soros = 2
         self.stop_win = 50.0
         self.stop_loss = 30.0
         self.lucro_dia = 0.0
@@ -56,6 +70,20 @@ class AppState:
                 "strategy": self.strategy,
                 "asset": self.asset,
                 "timeframe": self.timeframe,
+                "valor_entrada": self.valor_entrada,
+                "expiracao": self.expiracao,
+                "min_velas": self.min_velas,
+                "ema_rapida": self.ema_rapida,
+                "ema_lenta": self.ema_lenta,
+                "usar_filtro_ema": self.usar_filtro_ema,
+                "micro_mult": self.micro_mult,
+                "macro_mult": self.macro_mult,
+                "exigir_confluencia": self.exigir_confluencia,
+                "usar_martingale": self.usar_martingale,
+                "niveis_martingale": self.niveis_martingale,
+                "fator_martingale": self.fator_martingale,
+                "usar_soros": self.usar_soros,
+                "niveis_soros": self.niveis_soros,
                 "stop_win": self.stop_win,
                 "stop_loss": self.stop_loss,
                 "lucro_dia": round(self.lucro_dia, 2),

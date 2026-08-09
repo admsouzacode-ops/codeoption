@@ -8,7 +8,7 @@ import os
 import secrets
 import time
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
@@ -24,7 +24,13 @@ SESSION_SECRET = (os.getenv("SESSION_SECRET") or secrets.token_hex(32)).strip()
 COOKIE_NAME = "codeoption_auth"
 COOKIE_MAX_AGE = 60 * 60 * 12
 
-app = FastAPI(title="CodeOption", version="1.2.0")
+FALLBACK_ASSETS = [
+    "EURUSD-OTC", "GBPUSD-OTC", "USDJPY-OTC", "AUDUSD-OTC",
+    "EURGBP-OTC", "EURJPY-OTC", "GBPJPY-OTC", "USDCHF-OTC",
+    "EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD", "NZDUSD",
+]
+
+app = FastAPI(title="CodeOption", version="1.3.0")
 
 
 class LoginBody(BaseModel):
@@ -33,8 +39,24 @@ class LoginBody(BaseModel):
 
 
 class SettingsBody(BaseModel):
-    stop_win: float = Field(..., gt=0)
-    stop_loss: float = Field(..., gt=0)
+    asset: Optional[str] = None
+    stop_win: Optional[float] = Field(None, gt=0)
+    stop_loss: Optional[float] = Field(None, gt=0)
+    valor_entrada: Optional[float] = Field(None, gt=0)
+    expiracao: Optional[int] = Field(None, ge=1)
+    timeframe: Optional[int] = Field(None, ge=60)
+    min_velas: Optional[int] = Field(None, ge=2)
+    ema_rapida: Optional[int] = Field(None, ge=2)
+    ema_lenta: Optional[int] = Field(None, ge=3)
+    usar_filtro_ema: Optional[bool] = None
+    micro_mult: Optional[int] = Field(None, ge=2)
+    macro_mult: Optional[int] = Field(None, ge=3)
+    exigir_confluencia: Optional[bool] = None
+    usar_martingale: Optional[bool] = None
+    niveis_martingale: Optional[int] = Field(None, ge=0)
+    fator_martingale: Optional[float] = Field(None, gt=1)
+    usar_soros: Optional[bool] = None
+    niveis_soros: Optional[int] = Field(None, ge=0)
 
 
 def _auth_enabled() -> bool:
@@ -152,19 +174,83 @@ def api_settings(body: SettingsBody):
     from api.bot_runner import bot_runner
     from api.state import state
 
+    data = body.model_dump(exclude_none=True)
     with state.lock:
-        state.stop_win = float(body.stop_win)
-        state.stop_loss = float(body.stop_loss)
+        for key, value in data.items():
+            if key == "asset" and value:
+                state.asset = str(value).upper().strip()
+            elif hasattr(state, key):
+                setattr(state, key, value)
 
-    # se o bot estiver rodando, atualiza o risk manager em tempo real
-    bot_runner.update_stops(body.stop_win, body.stop_loss)
+        if body.stop_win is not None:
+            state.stop_win = float(body.stop_win)
+        if body.stop_loss is not None:
+            state.stop_loss = float(body.stop_loss)
 
-    return {
-        "ok": True,
-        "stop_win": body.stop_win,
-        "stop_loss": body.stop_loss,
-        "message": "Stops atualizados",
-    }
+    if body.stop_win is not None and body.stop_loss is not None:
+        bot_runner.update_stops(body.stop_win, body.stop_loss)
+    elif body.stop_win is not None or body.stop_loss is not None:
+        bot_runner.update_stops(state.stop_win, state.stop_loss)
+
+    return {"ok": True, "message": "Configuracoes salvas", "settings": state.snapshot()}
+
+
+def _parse_open_assets(open_time: dict) -> List[str]:
+    names = set()
+    for market in ("turbo", "binary", "digital"):
+        bucket = open_time.get(market) or {}
+        for name, info in bucket.items():
+            if isinstance(info, dict) and info.get("open"):
+                names.add(str(name).upper())
+    return sorted(names)
+
+
+@app.get("/api/assets")
+def api_assets():
+    """Lista ativos abertos (API) ou fallback estatico."""
+    from api.bot_runner import bot_runner
+
+    # 1) se bot conectado, usa a mesma sessao
+    api = getattr(bot_runner, "_api", None)
+    if api is not None:
+        try:
+            open_time = api.get_all_open_time()
+            assets = _parse_open_assets(open_time)
+            if assets:
+                return {"ok": True, "source": "live", "assets": assets}
+        except Exception as exc:
+            return {"ok": True, "source": "fallback", "assets": FALLBACK_ASSETS, "warning": str(exc)}
+
+    # 2) tenta conexao temporaria
+    try:
+        from core.settings import load_settings
+        from iqoptionapi.stable_api import IQ_Option
+
+        cfg = load_settings()
+        tmp = IQ_Option(cfg["email"], cfg["senha"])
+        check, reason = tmp.connect()
+        if not check:
+            return {
+                "ok": True,
+                "source": "fallback",
+                "assets": FALLBACK_ASSETS,
+                "warning": f"Nao conectou: {reason}",
+            }
+        tmp.change_balance(cfg["tipo_conta"])
+        open_time = tmp.get_all_open_time()
+        assets = _parse_open_assets(open_time)
+        return {
+            "ok": True,
+            "source": "live",
+            "assets": assets or FALLBACK_ASSETS,
+        }
+    except Exception as exc:
+        return {
+            "ok": True,
+            "source": "fallback",
+            "assets": FALLBACK_ASSETS,
+            "warning": str(exc),
+        }
 
 
 @app.post("/api/bot/start")
