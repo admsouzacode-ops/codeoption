@@ -31,10 +31,7 @@ function fillAssetSelect(assets, selected, forceRebuild = false) {
   const sel = $("#input-asset");
   if (!sel) return;
 
-  if (assets && assets.length) {
-    assetsCache = assets.slice();
-  }
-
+  if (assets && assets.length) assetsCache = assets.slice();
   const current = selected || sel.value || assetsCache[0] || "EURUSD-OTC";
 
   if (assetsLoadedOnce && !forceRebuild && sel.options.length > 0) {
@@ -51,7 +48,6 @@ function fillAssetSelect(assets, selected, forceRebuild = false) {
 
   const list = assetsCache.length ? assetsCache : FALLBACK_ASSETS;
   sel.innerHTML = list.map((a) => `<option value="${a}">${a}</option>`).join("");
-
   if (![...sel.options].some((o) => o.value === current)) {
     const opt = document.createElement("option");
     opt.value = current;
@@ -128,6 +124,8 @@ function renderConfluence(conf) {
 
 function fillSettingsForm(data) {
   fillAssetSelect(null, data.asset, false);
+  const acc = (data.account || "PRACTICE").toUpperCase();
+  setIfIdle("#input-account", acc === "REAL" ? "REAL" : "PRACTICE");
   setIfIdle("#input-valor", data.valor_entrada);
   setIfIdle("#input-expiracao", data.expiracao);
   setIfIdle("#input-timeframe", data.timeframe);
@@ -188,7 +186,6 @@ async function refresh() {
     }
     $("#live-msg").textContent = data.last_message || "Monitorando...";
     renderConfluence(data.confluence);
-
     fillSettingsForm(data);
 
     const trades = data.trades || [];
@@ -215,6 +212,7 @@ const saveBtn = $("#save-settings");
 if (saveBtn) {
   saveBtn.addEventListener("click", async () => {
     const payload = {
+      account: $("#input-account").value,
       asset: $("#input-asset").value,
       valor_entrada: Number($("#input-valor").value),
       expiracao: Number($("#input-expiracao").value),
@@ -246,8 +244,8 @@ if (saveBtn) {
         body: JSON.stringify(payload),
       });
       const data = await res.json();
-      if (!res.ok) msg.textContent = data.detail || "Erro ao salvar";
-      else { msg.textContent = "Configurações salvas."; refresh(); }
+      if (!res.ok || data.ok === false) msg.textContent = data.detail || data.message || "Erro ao salvar";
+      else { msg.textContent = data.message || "Configurações salvas."; refresh(); }
     } catch { msg.textContent = "Falha de conexão"; }
     finally { saveBtn.disabled = false; saveBtn.textContent = "Salvar configurações"; }
   });
