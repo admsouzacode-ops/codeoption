@@ -166,6 +166,42 @@ button { font-family: inherit; }
 .signal-meta { margin-top: 8px; color: var(--muted); }
 .center { text-align: center; margin-top: 12px; }
 
+.conf-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+}
+.conf-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: #f8fafc;
+  border: 1px solid var(--border);
+}
+.conf-item.ok {
+  background: #ecfdf5;
+  border-color: #a7f3d0;
+}
+.conf-item.bad {
+  background: #f8fafc;
+  border-color: var(--border);
+}
+.conf-item.call-dir { border-left: 4px solid var(--success); }
+.conf-item.put-dir { border-left: 4px solid var(--danger); }
+.conf-mark {
+  width: 28px; height: 28px; border-radius: 50%;
+  display: grid; place-items: center;
+  font-weight: 800; font-size: 0.95rem;
+  background: #e2e8f0; color: #64748b;
+}
+.conf-item.ok .conf-mark {
+  background: #d1fae5; color: #047857;
+}
+.conf-item div { display: flex; flex-direction: column; gap: 2px; }
+.conf-item small { color: var(--muted); }
+
 .settings-list { list-style: none; margin-top: 16px; }
 .settings-list li {
   display: flex; justify-content: space-between;

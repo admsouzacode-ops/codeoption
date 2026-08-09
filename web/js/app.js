@@ -43,6 +43,47 @@ function renderTrades(list, mountId) {
     .join("");
 }
 
+function renderConfLayer(id, layer) {
+  const el = document.getElementById(id);
+  if (!el || !layer) return;
+  const ok = !!layer.ok;
+  const dir = (layer.direction || "").toUpperCase();
+  el.className = `conf-item ${ok ? "ok" : "bad"} ${dir === "CALL" ? "call-dir" : dir === "PUT" ? "put-dir" : ""}`;
+  el.querySelector(".conf-mark").textContent = ok ? "✓" : "○";
+  el.querySelector("strong").textContent = layer.label || id.replace("conf-", "");
+  el.querySelector("small").textContent = ok
+    ? `${dir} · TF ${layer.tf}s`
+    : `Sem tendência · TF ${layer.tf || "—"}s`;
+}
+
+function renderConfluence(conf) {
+  if (!conf) {
+    ["conf-nano", "conf-micro", "conf-macro"].forEach((id) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.className = "conf-item bad";
+      el.querySelector(".conf-mark").textContent = "○";
+      el.querySelector("small").textContent = "Aguardando...";
+    });
+    if ($("#conf-summary")) $("#conf-summary").textContent = "Ligue o robô para ver a confluência.";
+    return;
+  }
+
+  renderConfLayer("conf-nano", conf.nano);
+  renderConfLayer("conf-micro", conf.micro);
+  renderConfLayer("conf-macro", conf.macro);
+
+  const summary = $("#conf-summary");
+  if (!summary) return;
+  if (conf.aligned && conf.direction) {
+    summary.textContent = `✓ Alinhado em ${conf.direction} — pronto para entrada`;
+    summary.style.color = "#047857";
+  } else {
+    summary.textContent = "Aguardando as 3 tendências na mesma direção...";
+    summary.style.color = "";
+  }
+}
+
 async function refresh() {
   try {
     const res = await fetch("/api/status", { credentials: "same-origin" });
@@ -100,6 +141,8 @@ async function refresh() {
       $("#signal-meta").textContent = "Aguardando mercado";
     }
     $("#live-msg").textContent = data.last_message || "Monitorando...";
+
+    renderConfluence(data.confluence);
 
     const trades = data.trades || [];
     if ($("#history-count")) $("#history-count").textContent = `${trades.length} ops`;
