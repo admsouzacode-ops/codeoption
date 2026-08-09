@@ -21,11 +21,10 @@ function renderTrades(list, mountId) {
   const el = document.getElementById(mountId);
   if (!el) return;
   if (!list || !list.length) {
-    el.innerHTML = `<p class="muted">Nenhuma operação ainda.</p>`;
+    el.innerHTML = `<p class="muted">Nenhuma operação nesta sessão ainda.</p>`;
     return;
   }
   el.innerHTML = list
-    .slice(0, 12)
     .map((t) => {
       const dir = (t.direction || "").toUpperCase();
       const tag = dir === "CALL" ? "call" : "put";
@@ -73,15 +72,17 @@ async function refresh() {
     $("#cfg-account").textContent = data.account || "—";
     $("#cfg-tf").textContent = data.timeframe ? `${data.timeframe}s` : "—";
 
-    if ($("#cfg-stop-win")) {
-      $("#cfg-stop-win").textContent = money(data.stop_win || 0, data.currency || "R$");
-    }
-    if ($("#cfg-stop-loss")) {
-      $("#cfg-stop-loss").textContent = money(data.stop_loss || 0, data.currency || "R$");
-    }
-    if ($("#server-time")) {
-      $("#server-time").textContent = data.server_time || "—";
-    }
+    const sw = Number(data.stop_win || 0);
+    const sl = Number(data.stop_loss || 0);
+    $("#cfg-stop-win").textContent = money(sw, data.currency || "R$");
+    $("#cfg-stop-loss").textContent = money(sl, data.currency || "R$");
+
+    const inWin = $("#input-stop-win");
+    const inLoss = $("#input-stop-loss");
+    if (inWin && document.activeElement !== inWin) inWin.value = sw || "";
+    if (inLoss && document.activeElement !== inLoss) inLoss.value = sl || "";
+
+    if ($("#server-time")) $("#server-time").textContent = data.server_time || "—";
 
     $("#conn-pill").textContent = connected ? "• Conectado" : "• Offline";
     $("#conn-pill").classList.toggle("on", connected);
@@ -100,8 +101,10 @@ async function refresh() {
     }
     $("#live-msg").textContent = data.last_message || "Monitorando...";
 
-    renderTrades(data.trades || [], "trades-home");
-    renderTrades(data.trades || [], "trades-history");
+    const trades = data.trades || [];
+    if ($("#history-count")) $("#history-count").textContent = `${trades.length} ops`;
+    renderTrades(trades.slice(0, 8), "trades-home");
+    renderTrades(trades, "trades-history");
   } catch (e) {
     $("#live-msg").textContent = "Sem conexão com a API";
   }
@@ -130,13 +133,52 @@ $("#bot-toggle").addEventListener("change", async (e) => {
   }
 });
 
+const saveBtn = $("#save-stops");
+if (saveBtn) {
+  saveBtn.addEventListener("click", async () => {
+    const stop_win = Number($("#input-stop-win").value);
+    const stop_loss = Number($("#input-stop-loss").value);
+    const msg = $("#settings-msg");
+
+    if (!stop_win || !stop_loss || stop_win <= 0 || stop_loss <= 0) {
+      msg.textContent = "Informe valores válidos (> 0).";
+      return;
+    }
+
+    saveBtn.disabled = true;
+    saveBtn.textContent = "Salvando...";
+    try {
+      const res = await fetch("/api/settings", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ stop_win, stop_loss }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        msg.textContent = data.detail || "Erro ao salvar";
+      } else {
+        msg.textContent = "Stops salvos com sucesso.";
+        refresh();
+      }
+    } catch {
+      msg.textContent = "Falha de conexão";
+    } finally {
+      saveBtn.disabled = false;
+      saveBtn.textContent = "Salvar stops";
+    }
+  });
+}
+
 async function logout() {
   await fetch("/api/logout", { method: "POST", credentials: "same-origin" });
   window.location.href = "/login";
 }
 
-const logoutBtn = document.getElementById("logout-btn");
+const logoutBtn = $("#logout-btn");
 if (logoutBtn) logoutBtn.addEventListener("click", logout);
+const logoutMobile = $("#logout-btn-mobile");
+if (logoutMobile) logoutMobile.addEventListener("click", logout);
 
 refresh();
 setInterval(refresh, 3000);
