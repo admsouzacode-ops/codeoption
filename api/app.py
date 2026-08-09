@@ -10,7 +10,7 @@ import time
 from pathlib import Path
 from typing import List, Optional
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -25,12 +25,23 @@ COOKIE_NAME = "codeoption_auth"
 COOKIE_MAX_AGE = 60 * 60 * 12
 
 FALLBACK_ASSETS = [
-    "EURUSD-OTC", "GBPUSD-OTC", "USDJPY-OTC", "AUDUSD-OTC",
-    "EURGBP-OTC", "EURJPY-OTC", "GBPJPY-OTC", "USDCHF-OTC",
-    "EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD", "NZDUSD",
+    "EURUSD-OTC",
+    "GBPUSD-OTC",
+    "USDJPY-OTC",
+    "AUDUSD-OTC",
+    "EURGBP-OTC",
+    "EURJPY-OTC",
+    "GBPJPY-OTC",
+    "USDCHF-OTC",
+    "USDCAD-OTC",
+    "NZDUSD-OTC",
+    "EURUSD",
+    "GBPUSD",
+    "USDJPY",
+    "AUDUSD",
 ]
 
-app = FastAPI(title="CodeOption", version="1.3.0")
+app = FastAPI(title="CodeOption", version="1.3.1")
 
 
 class LoginBody(BaseModel):
@@ -187,41 +198,60 @@ def api_settings(body: SettingsBody):
         if body.stop_loss is not None:
             state.stop_loss = float(body.stop_loss)
 
-    if body.stop_win is not None and body.stop_loss is not None:
-        bot_runner.update_stops(body.stop_win, body.stop_loss)
-    elif body.stop_win is not None or body.stop_loss is not None:
+    if body.stop_win is not None or body.stop_loss is not None:
         bot_runner.update_stops(state.stop_win, state.stop_loss)
 
     return {"ok": True, "message": "Configuracoes salvas", "settings": state.snapshot()}
 
 
-def _parse_open_assets(open_time: dict) -> List[str]:
+def _parse_open_assets(open_time: dict, prefer_otc: bool = True) -> List[str]:
+    """
+    Usa apenas turbo/binary (opcoes binarias).
+    Se houver OTC aberto, prioriza OTC (fim de semana / fora do horario).
+    """
     names = set()
-    for market in ("turbo", "binary", "digital"):
+    # digital costuma trazer dezenas de ativos irrelevantes para binarias
+    for market in ("turbo", "binary"):
         bucket = open_time.get(market) or {}
         for name, info in bucket.items():
             if isinstance(info, dict) and info.get("open"):
-                names.add(str(name).upper())
-    return sorted(names)
+                n = str(name).upper().strip()
+                if n:
+                    names.add(n)
+
+    all_open = sorted(names)
+    otc = [a for a in all_open if a.endswith("-OTC") or "-OTC" in a]
+
+    if prefer_otc and otc:
+        return otc
+    return all_open
 
 
-@app.get("/api/assets")
-def api_assets():
-    """Lista ativos abertos (API) ou fallback estatico."""
+def _fetch_open_assets(prefer_otc: bool = True) -> dict:
     from api.bot_runner import bot_runner
 
-    # 1) se bot conectado, usa a mesma sessao
     api = getattr(bot_runner, "_api", None)
     if api is not None:
         try:
             open_time = api.get_all_open_time()
-            assets = _parse_open_assets(open_time)
+            assets = _parse_open_assets(open_time, prefer_otc=prefer_otc)
             if assets:
-                return {"ok": True, "source": "live", "assets": assets}
+                return {
+                    "ok": True,
+                    "source": "live",
+                    "assets": assets,
+                    "count": len(assets),
+                    "prefer_otc": prefer_otc,
+                }
         except Exception as exc:
-            return {"ok": True, "source": "fallback", "assets": FALLBACK_ASSETS, "warning": str(exc)}
+            return {
+                "ok": True,
+                "source": "fallback",
+                "assets": FALLBACK_ASSETS,
+                "count": len(FALLBACK_ASSETS),
+                "warning": str(exc),
+            }
 
-    # 2) tenta conexao temporaria
     try:
         from core.settings import load_settings
         from iqoptionapi.stable_api import IQ_Option
@@ -234,23 +264,32 @@ def api_assets():
                 "ok": True,
                 "source": "fallback",
                 "assets": FALLBACK_ASSETS,
+                "count": len(FALLBACK_ASSETS),
                 "warning": f"Nao conectou: {reason}",
             }
         tmp.change_balance(cfg["tipo_conta"])
         open_time = tmp.get_all_open_time()
-        assets = _parse_open_assets(open_time)
+        assets = _parse_open_assets(open_time, prefer_otc=prefer_otc)
         return {
             "ok": True,
-            "source": "live",
+            "source": "live" if assets else "fallback",
             "assets": assets or FALLBACK_ASSETS,
+            "count": len(assets or FALLBACK_ASSETS),
+            "prefer_otc": prefer_otc,
         }
     except Exception as exc:
         return {
             "ok": True,
             "source": "fallback",
             "assets": FALLBACK_ASSETS,
+            "count": len(FALLBACK_ASSETS),
             "warning": str(exc),
         }
+
+
+@app.get("/api/assets")
+def api_assets(prefer_otc: bool = Query(True, description="Prioriza pares OTC abertos")):
+    return _fetch_open_assets(prefer_otc=prefer_otc)
 
 
 @app.post("/api/bot/start")

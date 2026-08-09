@@ -4,8 +4,12 @@ const $$ = (s) => document.querySelectorAll(s);
 const FALLBACK_ASSETS = [
   "EURUSD-OTC", "GBPUSD-OTC", "USDJPY-OTC", "AUDUSD-OTC",
   "EURGBP-OTC", "EURJPY-OTC", "GBPJPY-OTC", "USDCHF-OTC",
-  "EURUSD", "GBPUSD", "USDJPY", "AUDUSD",
+  "USDCAD-OTC", "NZDUSD-OTC",
 ];
+
+// lista estável — só muda quando o usuário busca ativos
+let assetsCache = [...FALLBACK_ASSETS];
+let assetsLoadedOnce = false;
 
 function money(v, currency = "R$") {
   const n = Number(v || 0);
@@ -23,16 +27,40 @@ function setTab(name) {
 $$(".nav-item").forEach((el) => el.addEventListener("click", () => setTab(el.dataset.tab)));
 $$(".bn-item").forEach((el) => el.addEventListener("click", () => setTab(el.dataset.tab)));
 
-function fillAssetSelect(assets, selected) {
+function fillAssetSelect(assets, selected, forceRebuild = false) {
   const sel = $("#input-asset");
   if (!sel) return;
-  const list = assets && assets.length ? assets : FALLBACK_ASSETS;
-  const current = selected || sel.value || "EURUSD-OTC";
+
+  if (assets && assets.length) {
+    assetsCache = assets.slice();
+  }
+
+  const current = selected || sel.value || assetsCache[0] || "EURUSD-OTC";
+
+  // se já montou e não for rebuild forçado, só garante a opção selecionada
+  if (assetsLoadedOnce && !forceRebuild && sel.options.length > 0) {
+    const exists = [...sel.options].some((o) => o.value === current);
+    if (!exists) {
+      const opt = document.createElement("option");
+      opt.value = current;
+      opt.textContent = current;
+      sel.insertBefore(opt, sel.firstChild);
+    }
+    if (document.activeElement !== sel) sel.value = current;
+    return;
+  }
+
+  const list = assetsCache.length ? assetsCache : FALLBACK_ASSETS;
   sel.innerHTML = list.map((a) => `<option value="${a}">${a}</option>`).join("");
+
   if (![...sel.options].some((o) => o.value === current)) {
-    sel.insertAdjacentHTML("afterbegin", `<option value="${current}">${current}</option>`);
+    const opt = document.createElement("option");
+    opt.value = current;
+    opt.textContent = current;
+    sel.insertBefore(opt, sel.firstChild);
   }
   sel.value = current;
+  assetsLoadedOnce = true;
 }
 
 function setIfIdle(id, value) {
@@ -100,7 +128,8 @@ function renderConfluence(conf) {
 }
 
 function fillSettingsForm(data) {
-  fillAssetSelect(null, data.asset);
+  // NÃO reconstrói o dropdown a cada poll — só atualiza seleção
+  fillAssetSelect(null, data.asset, false);
   setIfIdle("#input-valor", data.valor_entrada);
   setIfIdle("#input-expiracao", data.expiracao);
   setIfIdle("#input-timeframe", data.timeframe);
@@ -234,14 +263,19 @@ if (fetchBtn) {
     fetchBtn.textContent = "Buscando...";
     msg.textContent = "";
     try {
-      const res = await fetch("/api/assets", { credentials: "same-origin" });
+      // prefer_otc=true → só OTC quando houver OTC aberto
+      const res = await fetch("/api/assets?prefer_otc=true", { credentials: "same-origin" });
       const data = await res.json();
-      fillAssetSelect(data.assets || FALLBACK_ASSETS, $("#input-asset").value);
-      if (data.source === "live") msg.textContent = `Ativos abertos carregados (${data.assets.length}).`;
-      else msg.textContent = `Lista padrão (${(data.assets || []).length}). ${data.warning || ""}`;
+      const list = data.assets && data.assets.length ? data.assets : FALLBACK_ASSETS;
+      fillAssetSelect(list, $("#input-asset").value, true);
+      if (data.source === "live") {
+        msg.textContent = `${data.count} ativos abertos (prioridade OTC).`;
+      } else {
+        msg.textContent = `Lista padrão (${list.length}). ${data.warning || ""}`;
+      }
     } catch {
-      fillAssetSelect(FALLBACK_ASSETS, $("#input-asset").value);
-      msg.textContent = "Falha na busca. Usando lista padrão.";
+      fillAssetSelect(FALLBACK_ASSETS, $("#input-asset").value, true);
+      msg.textContent = "Falha na busca. Usando lista padrão OTC.";
     } finally {
       fetchBtn.disabled = false;
       fetchBtn.textContent = "Buscar ativos abertos";
@@ -256,6 +290,6 @@ async function logout() {
 $("#logout-btn")?.addEventListener("click", logout);
 $("#logout-btn-mobile")?.addEventListener("click", logout);
 
-fillAssetSelect(FALLBACK_ASSETS, "EURUSD-OTC");
+fillAssetSelect(FALLBACK_ASSETS, "EURUSD-OTC", true);
 refresh();
 setInterval(refresh, 3000);
