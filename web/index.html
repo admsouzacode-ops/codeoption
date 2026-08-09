@@ -21,6 +21,7 @@
       </nav>
       <div class="sidebar-footer">
         <div class="pill" id="conn-pill">• Offline</div>
+        <button id="logout-btn" style="margin-top:10px;width:100%;border:1px solid var(--border);background:#fff;border-radius:10px;padding:10px;cursor:pointer;color:var(--muted)">Sair</button>
       </div>
     </aside>
 
@@ -33,6 +34,7 @@
         <div class="topbar-right">
           <span class="badge" id="account-badge">DEMO</span>
           <span class="status-dot" id="status-dot"></span>
+          <button id="logout-btn-mobile" style="margin-left:8px;border:1px solid var(--border);background:#fff;border-radius:10px;padding:6px 10px;cursor:pointer;color:var(--muted);font-size:0.85rem">Sair</button>
         </div>
       </header>
 
@@ -41,7 +43,7 @@
           <div class="hero-left">
             <div class="robot">🤖</div>
             <div>
-              <h2 id="bot-title">Robô Offline</h2>
+              <h2 id="bot-title">Robô offline</h2>
               <p class="muted" id="bot-sub">Estratégia —</p>
               <p class="asset" id="bot-asset">—</p>
             </div>
@@ -110,5 +112,9 @@
     </nav>
   </div>
   <script src="/static/js/app.js"></script>
+  <script>
+    const m = document.getElementById('logout-btn-mobile');
+    if (m) m.addEventListener('click', () => document.getElementById('logout-btn')?.click());
+  </script>
 </body>
 </html>
