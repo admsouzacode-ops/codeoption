@@ -159,11 +159,23 @@
 
         <div class="card">
           <h3>Martingale / Soros</h3>
-          <label class="check-row"><input type="checkbox" id="input-martingale" /> Usar Martingale</label>
+          <div class="status-row">
+            <label class="check-row" style="margin-top:0">
+              <input type="checkbox" id="input-martingale" /> Usar Martingale
+            </label>
+            <span class="flag-badge off" id="badge-martingale">Desligado</span>
+          </div>
           <div class="form-row"><label>Níveis Martingale</label><input type="number" id="input-mg-levels" min="0" step="1" /></div>
           <div class="form-row"><label>Fator Martingale</label><input type="number" id="input-mg-factor" min="1.1" step="0.1" /></div>
-          <label class="check-row"><input type="checkbox" id="input-soros" /> Usar Soros</label>
+
+          <div class="status-row" style="margin-top:14px">
+            <label class="check-row" style="margin-top:0">
+              <input type="checkbox" id="input-soros" /> Usar Soros
+            </label>
+            <span class="flag-badge off" id="badge-soros">Desligado</span>
+          </div>
           <div class="form-row"><label>Níveis Soros</label><input type="number" id="input-soros-levels" min="0" step="1" /></div>
+          <p class="hint">O badge mostra o que está <strong>ativo de verdade</strong> no servidor (depois de salvar).</p>
         </div>
 
         <button class="btn-primary" id="save-settings">Salvar configurações</button>
