@@ -1,0 +1,5 @@
+# Pasta da API
+Copie a pasta iqoptionapi do repositorio:
+https://github.com/lukefeix/Rob-de-MHI-para-IQoption-Aulas-Completas
+Caminho: API Funcional/iqoptionapi
+Cole na raiz deste projeto como /iqoptionapi

@@ -1,0 +1,43 @@
+[LOGIN]
+email = seu_email@exemplo.com
+senha = sua_senha
+
+[CONTA]
+# PRACTICE = demo | REAL = conta real
+tipo_conta = PRACTICE
+
+[AJUSTES]
+# binarias ou digital
+tipo = binarias
+valor_entrada = 2
+# expiracao em minutos
+expiracao = 1
+# stop win / stop loss em valor absoluto da moeda
+stop_win = 50
+stop_loss = 30
+
+[MARTINGALE]
+usar_martingale = S
+niveis_martingale = 2
+fator_martingale = 2.0
+
+[SOROS]
+usar_soros = N
+niveis_soros = 2
+
+[ESTRATEGIA]
+# escadinha | mhi (mais estrategias podem ser adicionadas)
+nome = escadinha
+# ativo (ex: EURUSD, EURUSD-OTC, GBPUSD, etc)
+ativo = EURUSD-OTC
+# timeframe em segundos (60 = M1)
+timeframe = 60
+
+[ESCADINHA]
+# quantidade minima de velas iguais para confirmar
+min_velas = 3
+# periodos das EMAs de confirmacao de tendencia
+ema_rapida = 9
+ema_lenta = 21
+# se S, exige EMA a favor da direcao
+usar_filtro_ema = S
