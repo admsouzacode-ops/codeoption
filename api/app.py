@@ -4,16 +4,22 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import FastAPI
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from api.bot_runner import bot_runner
 from api.state import state
 
-WEB_DIR = Path(__file__).resolve().parent.parent / "web"
+BASE_DIR = Path(__file__).resolve().parent.parent
+WEB_DIR = BASE_DIR / "web"
 
 app = FastAPI(title="CodeOption", version="1.0.0")
+
+
+@app.get("/health")
+def health():
+    return {"ok": True, "status": "up"}
 
 
 @app.get("/api/status")
@@ -38,10 +44,17 @@ def api_trades():
     return {"trades": state.snapshot()["trades"]}
 
 
-@app.get("/")
+@app.get("/", response_class=HTMLResponse)
 def index():
-    return FileResponse(WEB_DIR / "index.html")
+    index_path = WEB_DIR / "index.html"
+    if not index_path.exists():
+        return HTMLResponse(
+            "<h1>CodeOption</h1><p>Frontend nao encontrado (web/index.html).</p>",
+            status_code=500,
+        )
+    return FileResponse(index_path)
 
 
+# /static/css/... e /static/js/...
 if WEB_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(WEB_DIR)), name="static")

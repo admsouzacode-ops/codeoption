@@ -1,11 +1,11 @@
 services:
   bot:
     build: .
-    container_name: codeoption-bot
     restart: unless-stopped
     ports:
       - "8000:8000"
     environment:
+      PORT: "8000"
       IQ_EMAIL: ${IQ_EMAIL}
       IQ_PASSWORD: ${IQ_PASSWORD}
       IQ_ACCOUNT: ${IQ_ACCOUNT:-PRACTICE}
