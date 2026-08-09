@@ -10,6 +10,7 @@ const FALLBACK_ASSETS = [
 
 let assetsCache = [...FALLBACK_ASSETS];
 let assetsLoadedOnce = false;
+let settingsDirty = false;
 
 function money(v, currency = "R$") {
   const n = Number(v || 0);
@@ -42,7 +43,7 @@ function fillAssetSelect(assets, selected, forceRebuild = false) {
       opt.textContent = current;
       sel.insertBefore(opt, sel.firstChild);
     }
-    if (document.activeElement !== sel) sel.value = current;
+    if (document.activeElement !== sel && !settingsDirty) sel.value = current;
     return;
   }
 
@@ -61,9 +62,17 @@ function fillAssetSelect(assets, selected, forceRebuild = false) {
 function setIfIdle(id, value) {
   const el = $(id);
   if (!el) return;
+  if (settingsDirty) return;
   if (document.activeElement === el) return;
   if (el.type === "checkbox") el.checked = !!value;
   else el.value = value ?? "";
+}
+
+function setFlagBadge(id, on) {
+  const el = $(id);
+  if (!el) return;
+  el.textContent = on ? "Ativo" : "Desligado";
+  el.className = `flag-badge ${on ? "on" : "off"}`;
 }
 
 function renderTrades(list, mountId) {
@@ -123,6 +132,12 @@ function renderConfluence(conf) {
 }
 
 function fillSettingsForm(data) {
+  // badges sempre refletem o servidor
+  setFlagBadge("#badge-martingale", !!data.usar_martingale);
+  setFlagBadge("#badge-soros", !!data.usar_soros);
+
+  if (settingsDirty) return;
+
   fillAssetSelect(null, data.asset, false);
   const acc = (data.account || "PRACTICE").toUpperCase();
   setIfIdle("#input-account", acc === "REAL" ? "REAL" : "PRACTICE");
@@ -208,6 +223,12 @@ $("#bot-toggle").addEventListener("change", async (e) => {
   } catch { e.target.checked = !on; alert("Erro ao falar com a API"); }
 });
 
+// marca formulario como editado para o poll nao sobrescrever
+document.querySelectorAll("#tab-settings input, #tab-settings select").forEach((el) => {
+  el.addEventListener("change", () => { settingsDirty = true; });
+  el.addEventListener("input", () => { settingsDirty = true; });
+});
+
 const saveBtn = $("#save-settings");
 if (saveBtn) {
   saveBtn.addEventListener("click", async () => {
@@ -244,8 +265,18 @@ if (saveBtn) {
         body: JSON.stringify(payload),
       });
       const data = await res.json();
-      if (!res.ok || data.ok === false) msg.textContent = data.detail || data.message || "Erro ao salvar";
-      else { msg.textContent = data.message || "Configurações salvas."; refresh(); }
+      if (!res.ok || data.ok === false) {
+        msg.textContent = data.detail || data.message || "Erro ao salvar";
+      } else {
+        settingsDirty = false;
+        msg.textContent = data.message || "Configurações salvas.";
+        // atualiza badges com o que o servidor confirmou
+        if (data.settings) {
+          setFlagBadge("#badge-martingale", !!data.settings.usar_martingale);
+          setFlagBadge("#badge-soros", !!data.settings.usar_soros);
+        }
+        refresh();
+      }
     } catch { msg.textContent = "Falha de conexão"; }
     finally { saveBtn.disabled = false; saveBtn.textContent = "Salvar configurações"; }
   });
