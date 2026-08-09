@@ -4,13 +4,13 @@ WORKDIR /app
 
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
-ENV PORT=8000
+ENV PORT=80
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-EXPOSE 8000
+EXPOSE 80
 
-CMD uvicorn api.app:app --host 0.0.0.0 --port ${PORT:-8000}
+CMD uvicorn api.app:app --host 0.0.0.0 --port ${PORT:-80}
