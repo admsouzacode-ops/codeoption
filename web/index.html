@@ -27,7 +27,7 @@
           Histórico
         </a>
         <a class="nav-item" data-tab="settings">
-          <svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2"/></svg>
+          <svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2"/></svg>
           Config
         </a>
       </nav>
@@ -111,6 +111,18 @@
       </section>
 
       <section id="tab-settings" class="tab">
+        <div class="card">
+          <h3>Conta</h3>
+          <div class="form-row">
+            <label>Tipo de conta</label>
+            <select id="input-account">
+              <option value="PRACTICE">DEMO (Practice)</option>
+              <option value="REAL">REAL</option>
+            </select>
+          </div>
+          <p class="hint">Se o robô estiver ligado, a troca aplica na hora na IQ Option.</p>
+        </div>
+
         <div class="card">
           <h3>Ativo</h3>
           <div class="form-row">
