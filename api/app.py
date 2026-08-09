@@ -6,10 +6,12 @@ import hmac
 import os
 import secrets
 from pathlib import Path
+from typing import Optional
 
-from fastapi import FastAPI, Form, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 from starlette.middleware.sessions import SessionMiddleware
 
 from api.bot_runner import bot_runner
@@ -20,23 +22,24 @@ WEB_DIR = BASE_DIR / "web"
 
 ADMIN_USER = os.getenv("ADMIN_USER", "admin")
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
-SESSION_SECRET = os.getenv("SESSION_SECRET", secrets.token_hex(32))
+SESSION_SECRET = os.getenv("SESSION_SECRET") or secrets.token_hex(32)
 
-app = FastAPI(title="CodeOption", version="1.1.0")
+app = FastAPI(title="CodeOption", version="1.1.1")
 app.add_middleware(
     SessionMiddleware,
     secret_key=SESSION_SECRET,
     session_cookie="codeoption_session",
-    max_age=60 * 60 * 12,  # 12 horas
+    max_age=60 * 60 * 12,
     same_site="lax",
     https_only=False,
 )
 
-PUBLIC_PATHS = {
-    "/health",
-    "/login",
-    "/api/login",
-}
+PUBLIC_PATHS = {"/health", "/login", "/api/login"}
+
+
+class LoginBody(BaseModel):
+    username: str
+    password: str
 
 
 def _auth_enabled() -> bool:
@@ -45,7 +48,7 @@ def _auth_enabled() -> bool:
 
 def _is_logged_in(request: Request) -> bool:
     if not _auth_enabled():
-        return True  # sem senha configurada: modo aberto (nao recomendado)
+        return True
     return bool(request.session.get("user"))
 
 
@@ -57,12 +60,9 @@ def _require_login(request: Request) -> None:
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
     path = request.url.path
-
-    # liberados
     if path in PUBLIC_PATHS or path.startswith("/static"):
         return await call_next(request)
 
-    # se auth ativo e nao logado
     if _auth_enabled() and not request.session.get("user"):
         if path.startswith("/api/"):
             return JSONResponse({"detail": "Nao autenticado"}, status_code=401)
@@ -87,18 +87,13 @@ def login_page(request: Request):
 
 
 @app.post("/api/login")
-async def api_login(
-    request: Request,
-    username: str = Form(...),
-    password: str = Form(...),
-):
+async def api_login(request: Request, body: LoginBody):
     if not _auth_enabled():
-        request.session["user"] = username or "admin"
+        request.session["user"] = body.username or "admin"
         return {"ok": True, "message": "Auth desabilitado (defina ADMIN_PASSWORD)"}
 
-    user_ok = hmac.compare_digest(username.strip(), ADMIN_USER)
-    pass_ok = hmac.compare_digest(password, ADMIN_PASSWORD)
-
+    user_ok = hmac.compare_digest(body.username.strip(), ADMIN_USER)
+    pass_ok = hmac.compare_digest(body.password, ADMIN_PASSWORD)
     if not (user_ok and pass_ok):
         raise HTTPException(status_code=401, detail="Usuario ou senha invalidos")
 
@@ -149,7 +144,7 @@ def index(request: Request):
     index_path = WEB_DIR / "index.html"
     if not index_path.exists():
         return HTMLResponse(
-            "<h1>CodeOption</h1><p>Frontend nao encontrado (web/index.html).</p>",
+            "<h1>CodeOption</h1><p>Frontend nao encontrado.</p>",
             status_code=500,
         )
     return FileResponse(index_path)
