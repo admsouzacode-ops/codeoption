@@ -1,6 +1,12 @@
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => document.querySelectorAll(s);
 
+const FALLBACK_ASSETS = [
+  "EURUSD-OTC", "GBPUSD-OTC", "USDJPY-OTC", "AUDUSD-OTC",
+  "EURGBP-OTC", "EURJPY-OTC", "GBPJPY-OTC", "USDCHF-OTC",
+  "EURUSD", "GBPUSD", "USDJPY", "AUDUSD",
+];
+
 function money(v, currency = "R$") {
   const n = Number(v || 0);
   return `${currency} ${n.toFixed(2).replace(".", ",")}`;
@@ -17,6 +23,26 @@ function setTab(name) {
 $$(".nav-item").forEach((el) => el.addEventListener("click", () => setTab(el.dataset.tab)));
 $$(".bn-item").forEach((el) => el.addEventListener("click", () => setTab(el.dataset.tab)));
 
+function fillAssetSelect(assets, selected) {
+  const sel = $("#input-asset");
+  if (!sel) return;
+  const list = assets && assets.length ? assets : FALLBACK_ASSETS;
+  const current = selected || sel.value || "EURUSD-OTC";
+  sel.innerHTML = list.map((a) => `<option value="${a}">${a}</option>`).join("");
+  if (![...sel.options].some((o) => o.value === current)) {
+    sel.insertAdjacentHTML("afterbegin", `<option value="${current}">${current}</option>`);
+  }
+  sel.value = current;
+}
+
+function setIfIdle(id, value) {
+  const el = $(id);
+  if (!el) return;
+  if (document.activeElement === el) return;
+  if (el.type === "checkbox") el.checked = !!value;
+  else el.value = value ?? "";
+}
+
 function renderTrades(list, mountId) {
   const el = document.getElementById(mountId);
   if (!el) return;
@@ -24,23 +50,16 @@ function renderTrades(list, mountId) {
     el.innerHTML = `<p class="muted">Nenhuma operação nesta sessão ainda.</p>`;
     return;
   }
-  el.innerHTML = list
-    .map((t) => {
-      const dir = (t.direction || "").toUpperCase();
-      const tag = dir === "CALL" ? "call" : "put";
-      const resClass = t.status === "WIN" ? "win" : t.status === "LOSS" ? "loss" : "";
-      const resVal = money(t.resultado || 0);
-      return `
-        <div class="trade">
-          <span class="tag ${tag}">${dir || "—"}</span>
-          <div class="trade-main">
-            <strong>${t.asset || "—"}</strong>
-            <small>${t.time || ""} · ${t.strategy || ""}</small>
-          </div>
-          <div class="trade-result ${resClass}">${t.status || ""} ${resVal}</div>
-        </div>`;
-    })
-    .join("");
+  el.innerHTML = list.map((t) => {
+    const dir = (t.direction || "").toUpperCase();
+    const tag = dir === "CALL" ? "call" : "put";
+    const resClass = t.status === "WIN" ? "win" : t.status === "LOSS" ? "loss" : "";
+    return `<div class="trade">
+      <span class="tag ${tag}">${dir || "—"}</span>
+      <div class="trade-main"><strong>${t.asset || "—"}</strong><small>${t.time || ""} · ${t.strategy || ""}</small></div>
+      <div class="trade-result ${resClass}">${t.status || ""} ${money(t.resultado || 0)}</div>
+    </div>`;
+  }).join("");
 }
 
 function renderConfLayer(id, layer) {
@@ -50,10 +69,8 @@ function renderConfLayer(id, layer) {
   const dir = (layer.direction || "").toUpperCase();
   el.className = `conf-item ${ok ? "ok" : "bad"} ${dir === "CALL" ? "call-dir" : dir === "PUT" ? "put-dir" : ""}`;
   el.querySelector(".conf-mark").textContent = ok ? "✓" : "○";
-  el.querySelector("strong").textContent = layer.label || id.replace("conf-", "");
-  el.querySelector("small").textContent = ok
-    ? `${dir} · TF ${layer.tf}s`
-    : `Sem tendência · TF ${layer.tf || "—"}s`;
+  el.querySelector("strong").textContent = layer.label || id;
+  el.querySelector("small").textContent = ok ? `${dir} · TF ${layer.tf}s` : `Sem tendência · TF ${layer.tf || "—"}s`;
 }
 
 function renderConfluence(conf) {
@@ -68,11 +85,9 @@ function renderConfluence(conf) {
     if ($("#conf-summary")) $("#conf-summary").textContent = "Ligue o robô para ver a confluência.";
     return;
   }
-
   renderConfLayer("conf-nano", conf.nano);
   renderConfLayer("conf-micro", conf.micro);
   renderConfLayer("conf-macro", conf.macro);
-
   const summary = $("#conf-summary");
   if (!summary) return;
   if (conf.aligned && conf.direction) {
@@ -84,13 +99,31 @@ function renderConfluence(conf) {
   }
 }
 
+function fillSettingsForm(data) {
+  fillAssetSelect(null, data.asset);
+  setIfIdle("#input-valor", data.valor_entrada);
+  setIfIdle("#input-expiracao", data.expiracao);
+  setIfIdle("#input-timeframe", data.timeframe);
+  setIfIdle("#input-stop-win", data.stop_win);
+  setIfIdle("#input-stop-loss", data.stop_loss);
+  setIfIdle("#input-min-velas", data.min_velas);
+  setIfIdle("#input-ema-fast", data.ema_rapida);
+  setIfIdle("#input-ema-slow", data.ema_lenta);
+  setIfIdle("#input-micro", data.micro_mult);
+  setIfIdle("#input-macro", data.macro_mult);
+  setIfIdle("#input-ema-filter", data.usar_filtro_ema);
+  setIfIdle("#input-confluencia", data.exigir_confluencia);
+  setIfIdle("#input-martingale", data.usar_martingale);
+  setIfIdle("#input-mg-levels", data.niveis_martingale);
+  setIfIdle("#input-mg-factor", data.fator_martingale);
+  setIfIdle("#input-soros", data.usar_soros);
+  setIfIdle("#input-soros-levels", data.niveis_soros);
+}
+
 async function refresh() {
   try {
     const res = await fetch("/api/status", { credentials: "same-origin" });
-    if (res.status === 401) {
-      window.location.href = "/login";
-      return;
-    }
+    if (res.status === 401) { window.location.href = "/login"; return; }
     const data = await res.json();
 
     $("#greeting").textContent = data.user_name ? `Olá, ${data.user_name}` : "Olá";
@@ -107,22 +140,8 @@ async function refresh() {
     $("#profit").textContent = money(data.lucro_dia, data.currency || "R$");
     $("#profit").className = data.lucro_dia >= 0 ? "pos" : "neg";
     $("#winrate").textContent = `${data.win_rate || 0}%`;
-
-    $("#cfg-strategy").textContent = data.strategy || "—";
-    $("#cfg-asset").textContent = data.asset || "—";
-    $("#cfg-account").textContent = data.account || "—";
-    $("#cfg-tf").textContent = data.timeframe ? `${data.timeframe}s` : "—";
-
-    const sw = Number(data.stop_win || 0);
-    const sl = Number(data.stop_loss || 0);
-    $("#cfg-stop-win").textContent = money(sw, data.currency || "R$");
-    $("#cfg-stop-loss").textContent = money(sl, data.currency || "R$");
-
-    const inWin = $("#input-stop-win");
-    const inLoss = $("#input-stop-loss");
-    if (inWin && document.activeElement !== inWin) inWin.value = sw || "";
-    if (inLoss && document.activeElement !== inLoss) inLoss.value = sl || "";
-
+    $("#cfg-stop-win").textContent = money(data.stop_win || 0, data.currency || "R$");
+    $("#cfg-stop-loss").textContent = money(data.stop_loss || 0, data.currency || "R$");
     if ($("#server-time")) $("#server-time").textContent = data.server_time || "—";
 
     $("#conn-pill").textContent = connected ? "• Conectado" : "• Offline";
@@ -141,8 +160,9 @@ async function refresh() {
       $("#signal-meta").textContent = "Aguardando mercado";
     }
     $("#live-msg").textContent = data.last_message || "Monitorando...";
-
     renderConfluence(data.confluence);
+
+    fillSettingsForm(data);
 
     const trades = data.trades || [];
     if ($("#history-count")) $("#history-count").textContent = `${trades.length} ops`;
@@ -156,38 +176,39 @@ async function refresh() {
 $("#bot-toggle").addEventListener("change", async (e) => {
   const on = e.target.checked;
   try {
-    const res = await fetch(on ? "/api/bot/start" : "/api/bot/stop", {
-      method: "POST",
-      credentials: "same-origin",
-    });
-    if (res.status === 401) {
-      window.location.href = "/login";
-      return;
-    }
+    const res = await fetch(on ? "/api/bot/start" : "/api/bot/stop", { method: "POST", credentials: "same-origin" });
+    if (res.status === 401) { window.location.href = "/login"; return; }
     const data = await res.json();
-    if (!data.ok) {
-      e.target.checked = !on;
-      alert(data.message || "Não foi possível alterar o bot");
-    }
+    if (!data.ok) { e.target.checked = !on; alert(data.message || "Falha"); }
     setTimeout(refresh, 800);
-  } catch {
-    e.target.checked = !on;
-    alert("Erro ao falar com a API");
-  }
+  } catch { e.target.checked = !on; alert("Erro ao falar com a API"); }
 });
 
-const saveBtn = $("#save-stops");
+const saveBtn = $("#save-settings");
 if (saveBtn) {
   saveBtn.addEventListener("click", async () => {
-    const stop_win = Number($("#input-stop-win").value);
-    const stop_loss = Number($("#input-stop-loss").value);
+    const payload = {
+      asset: $("#input-asset").value,
+      valor_entrada: Number($("#input-valor").value),
+      expiracao: Number($("#input-expiracao").value),
+      timeframe: Number($("#input-timeframe").value),
+      stop_win: Number($("#input-stop-win").value),
+      stop_loss: Number($("#input-stop-loss").value),
+      min_velas: Number($("#input-min-velas").value),
+      ema_rapida: Number($("#input-ema-fast").value),
+      ema_lenta: Number($("#input-ema-slow").value),
+      micro_mult: Number($("#input-micro").value),
+      macro_mult: Number($("#input-macro").value),
+      usar_filtro_ema: $("#input-ema-filter").checked,
+      exigir_confluencia: $("#input-confluencia").checked,
+      usar_martingale: $("#input-martingale").checked,
+      niveis_martingale: Number($("#input-mg-levels").value),
+      fator_martingale: Number($("#input-mg-factor").value),
+      usar_soros: $("#input-soros").checked,
+      niveis_soros: Number($("#input-soros-levels").value),
+    };
+
     const msg = $("#settings-msg");
-
-    if (!stop_win || !stop_loss || stop_win <= 0 || stop_loss <= 0) {
-      msg.textContent = "Informe valores válidos (> 0).";
-      return;
-    }
-
     saveBtn.disabled = true;
     saveBtn.textContent = "Salvando...";
     try {
@@ -195,20 +216,35 @@ if (saveBtn) {
         method: "POST",
         credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ stop_win, stop_loss }),
+        body: JSON.stringify(payload),
       });
       const data = await res.json();
-      if (!res.ok) {
-        msg.textContent = data.detail || "Erro ao salvar";
-      } else {
-        msg.textContent = "Stops salvos com sucesso.";
-        refresh();
-      }
+      if (!res.ok) msg.textContent = data.detail || "Erro ao salvar";
+      else { msg.textContent = "Configurações salvas."; refresh(); }
+    } catch { msg.textContent = "Falha de conexão"; }
+    finally { saveBtn.disabled = false; saveBtn.textContent = "Salvar configurações"; }
+  });
+}
+
+const fetchBtn = $("#btn-fetch-assets");
+if (fetchBtn) {
+  fetchBtn.addEventListener("click", async () => {
+    const msg = $("#assets-msg");
+    fetchBtn.disabled = true;
+    fetchBtn.textContent = "Buscando...";
+    msg.textContent = "";
+    try {
+      const res = await fetch("/api/assets", { credentials: "same-origin" });
+      const data = await res.json();
+      fillAssetSelect(data.assets || FALLBACK_ASSETS, $("#input-asset").value);
+      if (data.source === "live") msg.textContent = `Ativos abertos carregados (${data.assets.length}).`;
+      else msg.textContent = `Lista padrão (${(data.assets || []).length}). ${data.warning || ""}`;
     } catch {
-      msg.textContent = "Falha de conexão";
+      fillAssetSelect(FALLBACK_ASSETS, $("#input-asset").value);
+      msg.textContent = "Falha na busca. Usando lista padrão.";
     } finally {
-      saveBtn.disabled = false;
-      saveBtn.textContent = "Salvar stops";
+      fetchBtn.disabled = false;
+      fetchBtn.textContent = "Buscar ativos abertos";
     }
   });
 }
@@ -217,11 +253,9 @@ async function logout() {
   await fetch("/api/logout", { method: "POST", credentials: "same-origin" });
   window.location.href = "/login";
 }
+$("#logout-btn")?.addEventListener("click", logout);
+$("#logout-btn-mobile")?.addEventListener("click", logout);
 
-const logoutBtn = $("#logout-btn");
-if (logoutBtn) logoutBtn.addEventListener("click", logout);
-const logoutMobile = $("#logout-btn-mobile");
-if (logoutMobile) logoutMobile.addEventListener("click", logout);
-
+fillAssetSelect(FALLBACK_ASSETS, "EURUSD-OTC");
 refresh();
 setInterval(refresh, 3000);
