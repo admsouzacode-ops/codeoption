@@ -5,9 +5,9 @@ const FALLBACK_ASSETS = [
   "EURUSD-OTC", "GBPUSD-OTC", "USDJPY-OTC", "AUDUSD-OTC",
   "EURGBP-OTC", "EURJPY-OTC", "GBPJPY-OTC", "USDCHF-OTC",
   "USDCAD-OTC", "NZDUSD-OTC",
+  "EURUSD", "GBPUSD", "USDJPY", "AUDUSD",
 ];
 
-// lista estável — só muda quando o usuário busca ativos
 let assetsCache = [...FALLBACK_ASSETS];
 let assetsLoadedOnce = false;
 
@@ -37,7 +37,6 @@ function fillAssetSelect(assets, selected, forceRebuild = false) {
 
   const current = selected || sel.value || assetsCache[0] || "EURUSD-OTC";
 
-  // se já montou e não for rebuild forçado, só garante a opção selecionada
   if (assetsLoadedOnce && !forceRebuild && sel.options.length > 0) {
     const exists = [...sel.options].some((o) => o.value === current);
     if (!exists) {
@@ -128,7 +127,6 @@ function renderConfluence(conf) {
 }
 
 function fillSettingsForm(data) {
-  // NÃO reconstrói o dropdown a cada poll — só atualiza seleção
   fillAssetSelect(null, data.asset, false);
   setIfIdle("#input-valor", data.valor_entrada);
   setIfIdle("#input-expiracao", data.expiracao);
@@ -263,19 +261,20 @@ if (fetchBtn) {
     fetchBtn.textContent = "Buscando...";
     msg.textContent = "";
     try {
-      // prefer_otc=true → só OTC quando houver OTC aberto
-      const res = await fetch("/api/assets?prefer_otc=true", { credentials: "same-origin" });
+      const res = await fetch("/api/assets", { credentials: "same-origin" });
       const data = await res.json();
       const list = data.assets && data.assets.length ? data.assets : FALLBACK_ASSETS;
       fillAssetSelect(list, $("#input-asset").value, true);
       if (data.source === "live") {
-        msg.textContent = `${data.count} ativos abertos (prioridade OTC).`;
+        const otc = data.otc_count ?? list.filter((a) => a.includes("-OTC")).length;
+        const normal = data.normal_count ?? (list.length - otc);
+        msg.textContent = `${data.count} abertos · OTC: ${otc} · Normal: ${normal}`;
       } else {
         msg.textContent = `Lista padrão (${list.length}). ${data.warning || ""}`;
       }
     } catch {
       fillAssetSelect(FALLBACK_ASSETS, $("#input-asset").value, true);
-      msg.textContent = "Falha na busca. Usando lista padrão OTC.";
+      msg.textContent = "Falha na busca. Usando lista padrão.";
     } finally {
       fetchBtn.disabled = false;
       fetchBtn.textContent = "Buscar ativos abertos";
