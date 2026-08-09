@@ -24,10 +24,15 @@ class BotRunner:
     def __init__(self) -> None:
         self._thread: Optional[threading.Thread] = None
         self._stop = threading.Event()
+        self._risk: Optional[RiskManager] = None
 
     @property
     def is_running(self) -> bool:
         return self._thread is not None and self._thread.is_alive()
+
+    def update_stops(self, stop_win: float, stop_loss: float) -> None:
+        if self._risk is not None:
+            self._risk.update_stops(stop_win, stop_loss)
 
     def start(self) -> Dict:
         if self.is_running:
@@ -56,6 +61,10 @@ class BotRunner:
                 state.bot_running = False
             return
 
+        # stops da UI (state) tem prioridade sobre ENV se ja foram editados
+        stop_win = float(state.stop_win or cfg["stop_win"])
+        stop_loss = float(state.stop_loss or cfg["stop_loss"])
+
         with state.lock:
             state.bot_running = True
             state.error = None
@@ -63,8 +72,8 @@ class BotRunner:
             state.asset = cfg["ativo"]
             state.timeframe = cfg["timeframe"]
             state.account = cfg["tipo_conta"]
-            state.stop_win = float(cfg["stop_win"])
-            state.stop_loss = float(cfg["stop_loss"])
+            state.stop_win = stop_win
+            state.stop_loss = stop_loss
             state.started_at = datetime.now(TZ).isoformat()
             state.last_signal = None
             state.last_message = "Conectando..."
@@ -86,7 +95,8 @@ class BotRunner:
                 state.last_message = f"Falha na conexao: {exc}"
             return
 
-        risk = RiskManager(cfg["stop_win"], cfg["stop_loss"], state.currency)
+        risk = RiskManager(stop_win, stop_loss, state.currency)
+        self._risk = risk
         orders = OrderManager(
             api=api,
             risk=risk,
@@ -111,6 +121,9 @@ class BotRunner:
 
         while not self._stop.is_set() and risk.can_trade:
             try:
+                # aplica stops editados na UI em tempo real
+                risk.update_stops(state.stop_win, state.stop_loss)
+
                 if not ensure_connected(api, cfg["email"], cfg["senha"]):
                     with state.lock:
                         state.connected = False
@@ -164,7 +177,6 @@ class BotRunner:
                         }
                     )
 
-                    # limpa sinal do Live apos finalizar a operacao
                     with state.lock:
                         state.lucro_dia = risk.lucro_total
                         state.last_signal = None
@@ -187,10 +199,14 @@ class BotRunner:
         with state.lock:
             state.bot_running = False
             state.last_signal = None
-            if not risk.can_trade:
-                state.last_message = "Stop Win/Loss atingido — bot parado"
+            if risk.stop_reason == "STOP_WIN":
+                state.last_message = "Stop Win atingido — bot parado"
+            elif risk.stop_reason == "STOP_LOSS":
+                state.last_message = "Stop Loss atingido — bot parado"
             elif not state.last_message.startswith("Bot parado"):
                 state.last_message = "Bot finalizado"
+
+        self._risk = None
 
 
 bot_runner = BotRunner()

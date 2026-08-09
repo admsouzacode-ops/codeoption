@@ -13,7 +13,7 @@ from typing import Optional
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 WEB_DIR = BASE_DIR / "web"
@@ -22,14 +22,19 @@ ADMIN_USER = os.getenv("ADMIN_USER", "admin").strip()
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "").strip()
 SESSION_SECRET = (os.getenv("SESSION_SECRET") or secrets.token_hex(32)).strip()
 COOKIE_NAME = "codeoption_auth"
-COOKIE_MAX_AGE = 60 * 60 * 12  # 12h
+COOKIE_MAX_AGE = 60 * 60 * 12
 
-app = FastAPI(title="CodeOption", version="1.1.2")
+app = FastAPI(title="CodeOption", version="1.2.0")
 
 
 class LoginBody(BaseModel):
     username: str
     password: str
+
+
+class SettingsBody(BaseModel):
+    stop_win: float = Field(..., gt=0)
+    stop_loss: float = Field(..., gt=0)
 
 
 def _auth_enabled() -> bool:
@@ -48,7 +53,6 @@ def _verify(token: Optional[str]) -> bool:
     expected = hmac.new(SESSION_SECRET.encode(), value.encode(), hashlib.sha256).hexdigest()
     if not hmac.compare_digest(sig, expected):
         return False
-    # formato: user:exp
     try:
         user, exp_s = value.split(":", 1)
         if int(exp_s) < int(time.time()):
@@ -85,15 +89,12 @@ def _clear_cookie(response: Response) -> None:
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
     path = request.url.path
-
     if path in {"/health", "/login", "/api/login"} or path.startswith("/static"):
         return await call_next(request)
-
     if _auth_enabled() and not _is_logged_in(request):
         if path.startswith("/api/"):
             return JSONResponse({"detail": "Nao autenticado"}, status_code=401)
         return RedirectResponse("/login", status_code=302)
-
     return await call_next(request)
 
 
@@ -138,13 +139,32 @@ async def api_logout():
 
 @app.get("/api/status")
 def api_status(request: Request):
-    # import tardio para nao derrubar o painel se a API IQ falhar no boot
     from api.bot_runner import bot_runner
     from api.state import state
 
     snap = state.snapshot()
     snap["bot_running"] = bot_runner.is_running or snap["bot_running"]
     return snap
+
+
+@app.post("/api/settings")
+def api_settings(body: SettingsBody):
+    from api.bot_runner import bot_runner
+    from api.state import state
+
+    with state.lock:
+        state.stop_win = float(body.stop_win)
+        state.stop_loss = float(body.stop_loss)
+
+    # se o bot estiver rodando, atualiza o risk manager em tempo real
+    bot_runner.update_stops(body.stop_win, body.stop_loss)
+
+    return {
+        "ok": True,
+        "stop_win": body.stop_win,
+        "stop_loss": body.stop_loss,
+        "message": "Stops atualizados",
+    }
 
 
 @app.post("/api/bot/start")
