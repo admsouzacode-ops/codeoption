@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>CodeOption</title>
+  <link rel="stylesheet" href="/static/css/style.css" />
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="logo">IQ</div>
+        <span>CodeOption</span>
+      </div>
+      <nav>
+        <a class="nav-item active" data-tab="home"><span class="icon">⌂</span> Dashboard</a>
+        <a class="nav-item" data-tab="live"><span class="icon">◎</span> Live</a>
+        <a class="nav-item" data-tab="history"><span class="icon">◷</span> Histórico</a>
+        <a class="nav-item" data-tab="settings"><span class="icon">⚙</span> Config</a>
+      </nav>
+      <div class="sidebar-footer">
+        <div class="pill" id="conn-pill">• Offline</div>
+      </div>
+    </aside>
+
+    <main class="content">
+      <header class="topbar">
+        <div>
+          <p class="muted" id="greeting">Olá</p>
+          <h1 id="balance">—</h1>
+        </div>
+        <div class="topbar-right">
+          <span class="badge" id="account-badge">DEMO</span>
+          <span class="status-dot" id="status-dot"></span>
+        </div>
+      </header>
+
+      <section id="tab-home" class="tab active">
+        <div class="hero card">
+          <div class="hero-left">
+            <div class="robot">🤖</div>
+            <div>
+              <h2 id="bot-title">Robô Offline</h2>
+              <p class="muted" id="bot-sub">Estratégia —</p>
+              <p class="asset" id="bot-asset">—</p>
+            </div>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="bot-toggle" />
+            <span class="slider"></span>
+          </label>
+        </div>
+
+        <div class="metrics">
+          <div class="card metric">
+            <p class="muted">Lucro do dia</p>
+            <h3 id="profit">R$ 0,00</h3>
+          </div>
+          <div class="card metric">
+            <p class="muted">Taxa de acerto</p>
+            <h3 id="winrate">0%</h3>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-head"><h3>Operações recentes</h3></div>
+          <div id="trades-home" class="trades"></div>
+        </div>
+      </section>
+
+      <section id="tab-live" class="tab">
+        <div class="card signal-card">
+          <p class="muted">Sinal</p>
+          <div id="signal-box" class="signal-box idle">
+            <div class="signal-dir" id="signal-dir">—</div>
+            <div class="signal-meta" id="signal-meta">Aguardando mercado</div>
+          </div>
+          <p class="muted center" id="live-msg">Monitorando...</p>
+        </div>
+      </section>
+
+      <section id="tab-history" class="tab">
+        <div class="card">
+          <div class="card-head"><h3>Histórico</h3></div>
+          <div id="trades-history" class="trades"></div>
+        </div>
+      </section>
+
+      <section id="tab-settings" class="tab">
+        <div class="card">
+          <h3>Configuração</h3>
+          <p class="muted">Email, senha, Martingale, Soros e stops ficam nas <strong>variáveis de ambiente do Dokploy</strong> — não no GitHub.</p>
+          <ul class="settings-list">
+            <li><span>Estratégia</span><strong id="cfg-strategy">—</strong></li>
+            <li><span>Ativo</span><strong id="cfg-asset">—</strong></li>
+            <li><span>Conta</span><strong id="cfg-account">—</strong></li>
+            <li><span>Timeframe</span><strong id="cfg-tf">—</strong></li>
+          </ul>
+          <p class="hint">Para alterar, edite as ENV no Dokploy e faça redeploy.</p>
+        </div>
+      </section>
+    </main>
+
+    <nav class="bottom-nav">
+      <button class="bn-item active" data-tab="home"><span>⌂</span>Home</button>
+      <button class="bn-item" data-tab="live"><span>◎</span>Live</button>
+      <button class="bn-item" data-tab="history"><span>◷</span>Histórico</button>
+      <button class="bn-item" data-tab="settings"><span>⚙</span>Config</button>
+    </nav>
+  </div>
+  <script src="/static/js/app.js"></script>
+</body>
+</html>
