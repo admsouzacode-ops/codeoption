@@ -3,28 +3,24 @@ services:
     build: .
     container_name: codeoption-bot
     restart: unless-stopped
-    env_file:
-      - .env
     environment:
-      - IQ_EMAIL=${IQ_EMAIL}
-      - IQ_PASSWORD=${IQ_PASSWORD}
-      - IQ_ACCOUNT=${IQ_ACCOUNT:-PRACTICE}
-      - IQ_ORDER_TYPE=${IQ_ORDER_TYPE:-binarias}
-      - IQ_ENTRY_AMOUNT=${IQ_ENTRY_AMOUNT:-2}
-      - IQ_EXPIRATION=${IQ_EXPIRATION:-1}
-      - IQ_STOP_WIN=${IQ_STOP_WIN:-50}
-      - IQ_STOP_LOSS=${IQ_STOP_LOSS:-30}
-      - IQ_MARTINGALE=${IQ_MARTINGALE:-true}
-      - IQ_MARTINGALE_LEVELS=${IQ_MARTINGALE_LEVELS:-2}
-      - IQ_MARTINGALE_FACTOR=${IQ_MARTINGALE_FACTOR:-2.0}
-      - IQ_SOROS=${IQ_SOROS:-true}
-      - IQ_SOROS_LEVELS=${IQ_SOROS_LEVELS:-2}
-      - IQ_STRATEGY=${IQ_STRATEGY:-escadinha}
-      - IQ_ASSET=${IQ_ASSET:-EURUSD-OTC}
-      - IQ_TIMEFRAME=${IQ_TIMEFRAME:-60}
-      - IQ_MIN_CANDLES=${IQ_MIN_CANDLES:-3}
-      - IQ_EMA_FAST=${IQ_EMA_FAST:-9}
-      - IQ_EMA_SLOW=${IQ_EMA_SLOW:-21}
-      - IQ_EMA_FILTER=${IQ_EMA_FILTER:-true}
-    # Bot nao expoe porta HTTP
-    # Nao defina healthcheck HTTP no Dokploy
+      IQ_EMAIL: ${IQ_EMAIL}
+      IQ_PASSWORD: ${IQ_PASSWORD}
+      IQ_ACCOUNT: ${IQ_ACCOUNT:-PRACTICE}
+      IQ_ORDER_TYPE: ${IQ_ORDER_TYPE:-binarias}
+      IQ_ENTRY_AMOUNT: ${IQ_ENTRY_AMOUNT:-2}
+      IQ_EXPIRATION: ${IQ_EXPIRATION:-1}
+      IQ_STOP_WIN: ${IQ_STOP_WIN:-50}
+      IQ_STOP_LOSS: ${IQ_STOP_LOSS:-30}
+      IQ_MARTINGALE: ${IQ_MARTINGALE:-true}
+      IQ_MARTINGALE_LEVELS: ${IQ_MARTINGALE_LEVELS:-2}
+      IQ_MARTINGALE_FACTOR: ${IQ_MARTINGALE_FACTOR:-2.0}
+      IQ_SOROS: ${IQ_SOROS:-true}
+      IQ_SOROS_LEVELS: ${IQ_SOROS_LEVELS:-2}
+      IQ_STRATEGY: ${IQ_STRATEGY:-escadinha}
+      IQ_ASSET: ${IQ_ASSET:-EURUSD-OTC}
+      IQ_TIMEFRAME: ${IQ_TIMEFRAME:-60}
+      IQ_MIN_CANDLES: ${IQ_MIN_CANDLES:-3}
+      IQ_EMA_FAST: ${IQ_EMA_FAST:-9}
+      IQ_EMA_SLOW: ${IQ_EMA_SLOW:-21}
+      IQ_EMA_FILTER: ${IQ_EMA_FILTER:-true}
