@@ -1,0 +1,10 @@
+.git
+.env
+config.txt
+__pycache__
+*.pyc
+*.log
+.venv
+venv
+*.md
+COMO_ADICIONAR_API.txt
