@@ -1,16 +1,9 @@
-"""Estrategia Escadinha com confluencia Nano + Micro + Macro.
-
-- Nano  = timeframe de entrada (ex: M1) — escadinha de velas + EMA
-- Micro = timeframe medio (ex: M5) — tendencia EMA
-- Macro = timeframe maior (ex: M15) — tendencia EMA
-
-So gera sinal quando as 3 tendencias apontam a mesma direcao.
-"""
+"""Estrategia Escadinha com confluencia Nano + Micro + Macro."""
 
 from __future__ import annotations
 
 import time
-from typing import Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 from .base import BaseStrategy
 
@@ -56,13 +49,15 @@ class EscadinhaStrategy(BaseStrategy):
         return value
 
     def _get_candles(self, ativo: str, timeframe: int, qnt: int):
-        candles = self.api.get_candles(ativo, timeframe, qnt, time.time())
+        try:
+            candles = self.api.get_candles(ativo, timeframe, qnt, time.time())
+        except Exception:
+            return None
         if not candles or len(candles) < 3:
             return None
         return candles
 
     def _trend_ema(self, ativo: str, timeframe: int) -> Optional[str]:
-        """Retorna 'call', 'put' ou None conforme EMA rapida x lenta."""
         qnt = self.ema_lenta + 10
         candles = self._get_candles(ativo, timeframe, qnt)
         if not candles:
@@ -74,9 +69,8 @@ class EscadinhaStrategy(BaseStrategy):
         if ema_f is None or ema_s is None:
             return None
 
-        # margem minima para evitar mercado lateral
         diff = abs(ema_f - ema_s) / max(abs(ema_s), 1e-9)
-        if diff < 0.00005:  # ~0.005% — lateral demais
+        if diff < 0.00005:
             return None
 
         if ema_f > ema_s:
@@ -85,8 +79,7 @@ class EscadinhaStrategy(BaseStrategy):
             return "put"
         return None
 
-    def _nano_escadinha(self, ativo: str, timeframe: int) -> Optional[Tuple[str, str]]:
-        """Sinal nano: sequencia de velas + EMA no TF de entrada."""
+    def _nano_escadinha(self, ativo: str, timeframe: int) -> Optional[str]:
         qnt = max(self.min_velas + 5, self.ema_lenta + 10)
         candles = self._get_candles(ativo, timeframe, qnt)
         if not candles or len(candles) < self.min_velas:
@@ -105,7 +98,7 @@ class EscadinhaStrategy(BaseStrategy):
                 ema_s = self._ema(closes, self.ema_lenta)
                 if ema_f is None or ema_s is None or not (ema_f > ema_s):
                     return None
-            return "call", f"Nano: {self.min_velas} verdes"
+            return "call"
 
         if all(c == "vermelha" for c in colors):
             if self.usar_filtro_ema:
@@ -113,35 +106,63 @@ class EscadinhaStrategy(BaseStrategy):
                 ema_s = self._ema(closes, self.ema_lenta)
                 if ema_f is None or ema_s is None or not (ema_f < ema_s):
                     return None
-            return "put", f"Nano: {self.min_velas} vermelhas"
+            return "put"
 
         return None
 
-    def analyze(self, ativo: str, timeframe: int = 60) -> Optional[Tuple[str, str]]:
-        nano = self._nano_escadinha(ativo, timeframe)
-        if not nano:
-            return None
-
-        direcao, motivo_nano = nano
-
-        if not self.exigir_confluencia:
-            return direcao, motivo_nano
-
+    def diagnose(self, ativo: str, timeframe: int = 60) -> Dict[str, Any]:
+        """Status de cada camada para a UI Live."""
         tf_micro = timeframe * self.micro_mult
         tf_macro = timeframe * self.macro_mult
 
+        nano = self._nano_escadinha(ativo, timeframe)
         micro = self._trend_ema(ativo, tf_micro)
         macro = self._trend_ema(ativo, tf_macro)
 
-        if micro is None or macro is None:
+        aligned = False
+        direction = None
+        if nano and micro and macro and nano == micro == macro:
+            aligned = True
+            direction = nano
+        elif not self.exigir_confluencia and nano:
+            aligned = True
+            direction = nano
+
+        return {
+            "nano": {
+                "ok": nano is not None,
+                "direction": (nano or "").upper() or None,
+                "tf": timeframe,
+                "label": f"Nano M{max(1, timeframe // 60)}",
+            },
+            "micro": {
+                "ok": micro is not None,
+                "direction": (micro or "").upper() or None,
+                "tf": tf_micro,
+                "label": f"Micro M{max(1, tf_micro // 60)}",
+            },
+            "macro": {
+                "ok": macro is not None,
+                "direction": (macro or "").upper() or None,
+                "tf": tf_macro,
+                "label": f"Macro M{max(1, tf_macro // 60)}",
+            },
+            "aligned": aligned,
+            "direction": (direction or "").upper() or None,
+            "exigir_confluencia": self.exigir_confluencia,
+        }
+
+    def analyze(self, ativo: str, timeframe: int = 60) -> Optional[Tuple[str, str]]:
+        diag = self.diagnose(ativo, timeframe)
+        if not diag["aligned"] or not diag["direction"]:
             return None
 
-        # as 3 precisam apontar a mesma direcao
-        if not (direcao == micro == macro):
-            return None
-
+        direcao = diag["direction"].lower()
+        n = diag["nano"]
+        mi = diag["micro"]
+        ma = diag["macro"]
         motivo = (
-            f"{motivo_nano} | Micro TF{tf_micro}s={micro.upper()} "
-            f"| Macro TF{tf_macro}s={macro.upper()}"
+            f"Nano {n['direction']} | Micro TF{mi['tf']}s={mi['direction']} "
+            f"| Macro TF{ma['tf']}s={ma['direction']}"
         )
         return direcao, motivo

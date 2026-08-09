@@ -36,6 +36,7 @@ class AppState:
         self.wins = 0
         self.losses = 0
         self.last_signal: Optional[Dict[str, Any]] = None
+        self.confluence: Optional[Dict[str, Any]] = None
         self.last_message = "Aguardando inicio"
         self.trades: List[Dict[str, Any]] = []
         self.error: Optional[str] = None
@@ -62,6 +63,7 @@ class AppState:
                 "losses": self.losses,
                 "win_rate": win_rate,
                 "last_signal": self.last_signal,
+                "confluence": self.confluence,
                 "last_message": self.last_message,
                 "error": self.error,
                 "started_at": self.started_at,
