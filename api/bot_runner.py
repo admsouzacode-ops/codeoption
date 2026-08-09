@@ -48,6 +48,7 @@ class BotRunner:
         with state.lock:
             state.bot_running = False
             state.last_signal = None
+            state.confluence = None
             state.last_message = "Bot parado"
         return {"ok": True, "message": "Bot parado"}
 
@@ -61,7 +62,6 @@ class BotRunner:
                 state.bot_running = False
             return
 
-        # stops da UI (state) tem prioridade sobre ENV se ja foram editados
         stop_win = float(state.stop_win or cfg["stop_win"])
         stop_loss = float(state.stop_loss or cfg["stop_loss"])
 
@@ -76,6 +76,7 @@ class BotRunner:
             state.stop_loss = stop_loss
             state.started_at = datetime.now(TZ).isoformat()
             state.last_signal = None
+            state.confluence = None
             state.last_message = "Conectando..."
 
         try:
@@ -114,6 +115,9 @@ class BotRunner:
             ema_rapida=cfg["ema_rapida"],
             ema_lenta=cfg["ema_lenta"],
             usar_filtro_ema=cfg["usar_filtro_ema"],
+            micro_mult=cfg.get("micro_mult", 5),
+            macro_mult=cfg.get("macro_mult", 15),
+            exigir_confluencia=cfg.get("exigir_confluencia", True),
         )
 
         ultimo_sinal_ts = 0.0
@@ -121,7 +125,6 @@ class BotRunner:
 
         while not self._stop.is_set() and risk.can_trade:
             try:
-                # aplica stops editados na UI em tempo real
                 risk.update_stops(state.stop_win, state.stop_loss)
 
                 if not ensure_connected(api, cfg["email"], cfg["senha"]):
@@ -134,6 +137,15 @@ class BotRunner:
                 with state.lock:
                     state.connected = True
                     state.balance = float(api.get_balance())
+
+                # status Live nano/micro/macro
+                if hasattr(strategy, "diagnose"):
+                    try:
+                        diag = strategy.diagnose(cfg["ativo"], timeframe)
+                        with state.lock:
+                            state.confluence = diag
+                    except Exception:
+                        pass
 
                 result = strategy.analyze(cfg["ativo"], timeframe)
                 now_ts = time.time()
