@@ -7,6 +7,7 @@ import threading
 import time
 from datetime import datetime
 from typing import Dict, Optional
+from zoneinfo import ZoneInfo
 
 from core.connection import connect_iq, ensure_connected
 from core.order import OrderManager
@@ -14,7 +15,9 @@ from core.risk import RiskManager
 from core.settings import load_settings
 from strategies import get_strategy
 
-from api.state import state
+from api.state import state, time_br
+
+TZ = ZoneInfo("America/Sao_Paulo")
 
 
 class BotRunner:
@@ -39,6 +42,7 @@ class BotRunner:
         self._stop.set()
         with state.lock:
             state.bot_running = False
+            state.last_signal = None
             state.last_message = "Bot parado"
         return {"ok": True, "message": "Bot parado"}
 
@@ -59,7 +63,10 @@ class BotRunner:
             state.asset = cfg["ativo"]
             state.timeframe = cfg["timeframe"]
             state.account = cfg["tipo_conta"]
-            state.started_at = datetime.now().isoformat()
+            state.stop_win = float(cfg["stop_win"])
+            state.stop_loss = float(cfg["stop_loss"])
+            state.started_at = datetime.now(TZ).isoformat()
+            state.last_signal = None
             state.last_message = "Conectando..."
 
         try:
@@ -125,9 +132,10 @@ class BotRunner:
                             "direction": direcao.upper(),
                             "reason": motivo,
                             "asset": cfg["ativo"],
-                            "time": datetime.now().strftime("%H:%M:%S"),
+                            "time": time_br(),
+                            "active": True,
                         }
-                        state.last_message = f"Sinal {direcao.upper()} — aguardando vela"
+                        state.last_message = f"Sinal {direcao.upper()} — entrando"
 
                     server_now = datetime.fromtimestamp(api.get_server_timestamp())
                     espera = max(1, timeframe - server_now.second)
@@ -152,17 +160,22 @@ class BotRunner:
                             "resultado": round(resultado, 2),
                             "status": "WIN" if resultado > 0 else ("LOSS" if resultado < 0 else "EMPATE"),
                             "strategy": cfg["estrategia"],
+                            "time": time_br(),
                         }
                     )
+
+                    # limpa sinal do Live apos finalizar a operacao
                     with state.lock:
                         state.lucro_dia = risk.lucro_total
-                        state.last_message = f"Operacao {direcao.upper()} finalizada"
+                        state.last_signal = None
+                        state.last_message = "Monitorando..."
                         state.balance = float(api.get_balance())
 
                     ultimo_sinal_ts = time.time()
                 else:
                     with state.lock:
-                        state.last_message = f"Monitorando {cfg['ativo']}..."
+                        if state.last_signal is None:
+                            state.last_message = f"Monitorando {cfg['ativo']}..."
                     time.sleep(1)
 
             except Exception as exc:
@@ -173,7 +186,10 @@ class BotRunner:
 
         with state.lock:
             state.bot_running = False
-            if not state.last_message.startswith("Bot parado"):
+            state.last_signal = None
+            if not risk.can_trade:
+                state.last_message = "Stop Win/Loss atingido — bot parado"
+            elif not state.last_message.startswith("Bot parado"):
                 state.last_message = "Bot finalizado"
 
 

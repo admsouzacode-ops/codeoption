@@ -73,22 +73,32 @@ async function refresh() {
     $("#cfg-account").textContent = data.account || "—";
     $("#cfg-tf").textContent = data.timeframe ? `${data.timeframe}s` : "—";
 
+    if ($("#cfg-stop-win")) {
+      $("#cfg-stop-win").textContent = money(data.stop_win || 0, data.currency || "R$");
+    }
+    if ($("#cfg-stop-loss")) {
+      $("#cfg-stop-loss").textContent = money(data.stop_loss || 0, data.currency || "R$");
+    }
+    if ($("#server-time")) {
+      $("#server-time").textContent = data.server_time || "—";
+    }
+
     $("#conn-pill").textContent = connected ? "• Conectado" : "• Offline";
     $("#conn-pill").classList.toggle("on", connected);
     $("#status-dot").classList.toggle("on", connected);
 
     const signal = data.last_signal;
     const box = $("#signal-box");
-    if (signal && signal.direction) {
+    if (signal && signal.direction && signal.active !== false) {
       box.className = `signal-box ${signal.direction.toLowerCase()}`;
       $("#signal-dir").textContent = signal.direction;
-      $("#signal-meta").textContent = `${signal.asset || ""} · ${signal.reason || ""}`;
+      $("#signal-meta").textContent = `${signal.asset || ""} · ${signal.time || ""} · ${signal.reason || ""}`;
     } else {
       box.className = "signal-box idle";
       $("#signal-dir").textContent = "—";
       $("#signal-meta").textContent = "Aguardando mercado";
     }
-    $("#live-msg").textContent = data.last_message || "—";
+    $("#live-msg").textContent = data.last_message || "Monitorando...";
 
     renderTrades(data.trades || [], "trades-home");
     renderTrades(data.trades || [], "trades-history");

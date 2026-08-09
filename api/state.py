@@ -5,6 +5,17 @@ from __future__ import annotations
 import threading
 from datetime import datetime
 from typing import Any, Dict, List, Optional
+from zoneinfo import ZoneInfo
+
+TZ = ZoneInfo("America/Sao_Paulo")
+
+
+def now_br() -> datetime:
+    return datetime.now(TZ)
+
+
+def time_br() -> str:
+    return now_br().strftime("%H:%M:%S")
 
 
 class AppState:
@@ -19,6 +30,8 @@ class AppState:
         self.strategy = "escadinha"
         self.asset = "EURUSD-OTC"
         self.timeframe = 60
+        self.stop_win = 50.0
+        self.stop_loss = 30.0
         self.lucro_dia = 0.0
         self.wins = 0
         self.losses = 0
@@ -42,6 +55,8 @@ class AppState:
                 "strategy": self.strategy,
                 "asset": self.asset,
                 "timeframe": self.timeframe,
+                "stop_win": self.stop_win,
+                "stop_loss": self.stop_loss,
                 "lucro_dia": round(self.lucro_dia, 2),
                 "wins": self.wins,
                 "losses": self.losses,
@@ -50,13 +65,15 @@ class AppState:
                 "last_message": self.last_message,
                 "error": self.error,
                 "started_at": self.started_at,
+                "server_time": time_br(),
+                "timezone": "America/Sao_Paulo",
                 "trades": list(self.trades[:50]),
             }
 
     def add_trade(self, trade: Dict[str, Any]) -> None:
         with self.lock:
             trade["id"] = len(self.trades) + 1
-            trade["time"] = trade.get("time") or datetime.now().strftime("%H:%M:%S")
+            trade["time"] = trade.get("time") or time_br()
             self.trades.insert(0, trade)
             self.trades = self.trades[:100]
             resultado = float(trade.get("resultado", 0) or 0)
