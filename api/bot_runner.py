@@ -25,6 +25,7 @@ class BotRunner:
         self._thread: Optional[threading.Thread] = None
         self._stop = threading.Event()
         self._risk: Optional[RiskManager] = None
+        self._api = None
 
     @property
     def is_running(self) -> bool:
@@ -52,6 +53,30 @@ class BotRunner:
             state.last_message = "Bot parado"
         return {"ok": True, "message": "Bot parado"}
 
+    def _seed_state(self, cfg: dict) -> None:
+        """Preenche state com ENV se ainda nao foi editado na UI."""
+        with state.lock:
+            if not state.asset:
+                state.asset = cfg["ativo"]
+            # se o asset ainda e o default e o ENV e diferente, respeita UI se ja mudou
+            state.strategy = cfg["estrategia"]
+            state.account = cfg["tipo_conta"]
+            if not state.timeframe:
+                state.timeframe = cfg["timeframe"]
+            if not state.valor_entrada:
+                state.valor_entrada = cfg["valor_entrada"]
+            if not state.expiracao:
+                state.expiracao = cfg["expiracao"]
+            state.min_velas = state.min_velas or cfg["min_velas"]
+            state.ema_rapida = state.ema_rapida or cfg["ema_rapida"]
+            state.ema_lenta = state.ema_lenta or cfg["ema_lenta"]
+            state.micro_mult = state.micro_mult or cfg.get("micro_mult", 5)
+            state.macro_mult = state.macro_mult or cfg.get("macro_mult", 15)
+            if not state.stop_win:
+                state.stop_win = cfg["stop_win"]
+            if not state.stop_loss:
+                state.stop_loss = cfg["stop_loss"]
+
     def _loop(self) -> None:
         try:
             cfg = load_settings()
@@ -62,16 +87,14 @@ class BotRunner:
                 state.bot_running = False
             return
 
+        self._seed_state(cfg)
+
         stop_win = float(state.stop_win or cfg["stop_win"])
         stop_loss = float(state.stop_loss or cfg["stop_loss"])
 
         with state.lock:
             state.bot_running = True
             state.error = None
-            state.strategy = cfg["estrategia"]
-            state.asset = cfg["ativo"]
-            state.timeframe = cfg["timeframe"]
-            state.account = cfg["tipo_conta"]
             state.stop_win = stop_win
             state.stop_loss = stop_loss
             state.started_at = datetime.now(TZ).isoformat()
@@ -81,6 +104,7 @@ class BotRunner:
 
         try:
             api, _ = connect_iq(cfg["email"], cfg["senha"], cfg["tipo_conta"])
+            self._api = api
             perfil = json.loads(json.dumps(api.get_profile_ansyc()))
             with state.lock:
                 state.connected = True
@@ -94,38 +118,45 @@ class BotRunner:
                 state.bot_running = False
                 state.error = str(exc)
                 state.last_message = f"Falha na conexao: {exc}"
+            self._api = None
             return
 
         risk = RiskManager(stop_win, stop_loss, state.currency)
         self._risk = risk
-        orders = OrderManager(
-            api=api,
-            risk=risk,
-            tipo=cfg["tipo"],
-            martingale_niveis=cfg["niveis_martingale"],
-            martingale_fator=cfg["fator_martingale"],
-            usar_soros=cfg["usar_soros"],
-            niveis_soros=cfg["niveis_soros"],
-            currency=state.currency,
-        )
-        strategy = get_strategy(
-            cfg["estrategia"],
-            api,
-            min_velas=cfg["min_velas"],
-            ema_rapida=cfg["ema_rapida"],
-            ema_lenta=cfg["ema_lenta"],
-            usar_filtro_ema=cfg["usar_filtro_ema"],
-            micro_mult=cfg.get("micro_mult", 5),
-            macro_mult=cfg.get("macro_mult", 15),
-            exigir_confluencia=cfg.get("exigir_confluencia", True),
-        )
 
         ultimo_sinal_ts = 0.0
-        timeframe = cfg["timeframe"]
 
         while not self._stop.is_set() and risk.can_trade:
             try:
+                # configs em tempo real da UI
+                ativo = (state.asset or cfg["ativo"]).upper()
+                timeframe = int(state.timeframe or cfg["timeframe"])
+                valor_entrada = float(state.valor_entrada or cfg["valor_entrada"])
+                expiracao = int(state.expiracao or cfg["expiracao"])
+
                 risk.update_stops(state.stop_win, state.stop_loss)
+
+                orders = OrderManager(
+                    api=api,
+                    risk=risk,
+                    tipo=cfg["tipo"],
+                    martingale_niveis=int(state.niveis_martingale if state.usar_martingale else 0),
+                    martingale_fator=float(state.fator_martingale or cfg["fator_martingale"]),
+                    usar_soros=bool(state.usar_soros),
+                    niveis_soros=int(state.niveis_soros or 0),
+                    currency=state.currency,
+                )
+                strategy = get_strategy(
+                    state.strategy or cfg["estrategia"],
+                    api,
+                    min_velas=int(state.min_velas or cfg["min_velas"]),
+                    ema_rapida=int(state.ema_rapida or cfg["ema_rapida"]),
+                    ema_lenta=int(state.ema_lenta or cfg["ema_lenta"]),
+                    usar_filtro_ema=bool(state.usar_filtro_ema),
+                    micro_mult=int(state.micro_mult or 5),
+                    macro_mult=int(state.macro_mult or 15),
+                    exigir_confluencia=bool(state.exigir_confluencia),
+                )
 
                 if not ensure_connected(api, cfg["email"], cfg["senha"]):
                     with state.lock:
@@ -137,17 +168,17 @@ class BotRunner:
                 with state.lock:
                     state.connected = True
                     state.balance = float(api.get_balance())
+                    state.asset = ativo
 
-                # status Live nano/micro/macro
                 if hasattr(strategy, "diagnose"):
                     try:
-                        diag = strategy.diagnose(cfg["ativo"], timeframe)
+                        diag = strategy.diagnose(ativo, timeframe)
                         with state.lock:
                             state.confluence = diag
                     except Exception:
                         pass
 
-                result = strategy.analyze(cfg["ativo"], timeframe)
+                result = strategy.analyze(ativo, timeframe)
                 now_ts = time.time()
 
                 if result and (now_ts - ultimo_sinal_ts) > timeframe:
@@ -156,7 +187,7 @@ class BotRunner:
                         state.last_signal = {
                             "direction": direcao.upper(),
                             "reason": motivo,
-                            "asset": cfg["ativo"],
+                            "asset": ativo,
                             "time": time_br(),
                             "active": True,
                         }
@@ -171,20 +202,20 @@ class BotRunner:
 
                     lucro_antes = risk.lucro_total
                     orders.execute(
-                        ativo=cfg["ativo"],
-                        valor_entrada=cfg["valor_entrada"],
+                        ativo=ativo,
+                        valor_entrada=valor_entrada,
                         direcao=direcao,
-                        expiracao=cfg["expiracao"],
+                        expiracao=expiracao,
                     )
                     resultado = risk.lucro_total - lucro_antes
 
                     state.add_trade(
                         {
-                            "asset": cfg["ativo"],
+                            "asset": ativo,
                             "direction": direcao.upper(),
                             "resultado": round(resultado, 2),
                             "status": "WIN" if resultado > 0 else ("LOSS" if resultado < 0 else "EMPATE"),
-                            "strategy": cfg["estrategia"],
+                            "strategy": state.strategy or cfg["estrategia"],
                             "time": time_br(),
                         }
                     )
@@ -199,7 +230,7 @@ class BotRunner:
                 else:
                     with state.lock:
                         if state.last_signal is None:
-                            state.last_message = f"Monitorando {cfg['ativo']}..."
+                            state.last_message = f"Monitorando {ativo}..."
                     time.sleep(1)
 
             except Exception as exc:
@@ -219,6 +250,7 @@ class BotRunner:
                 state.last_message = "Bot finalizado"
 
         self._risk = None
+        self._api = None
 
 
 bot_runner = BotRunner()
