@@ -6,7 +6,7 @@ import json
 import threading
 import time
 from datetime import datetime
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 from zoneinfo import ZoneInfo
 
 from core.connection import connect_iq, ensure_connected
@@ -35,6 +35,29 @@ class BotRunner:
         if self._risk is not None:
             self._risk.update_stops(stop_win, stop_loss)
 
+    def change_account(self, account: str) -> Tuple[bool, str]:
+        """Troca PRACTICE/REAL na sessao atual (se conectado)."""
+        account = (account or "PRACTICE").upper()
+        if account not in ("PRACTICE", "REAL"):
+            return False, "Conta invalida"
+
+        with state.lock:
+            state.account = account
+
+        api = self._api
+        if api is None:
+            return True, f"Conta {account} sera usada na proxima conexao"
+
+        try:
+            api.change_balance(account)
+            bal = float(api.get_balance())
+            with state.lock:
+                state.balance = bal
+                state.account = account
+            return True, f"Conta alterada para {account} (saldo {bal:.2f})"
+        except Exception as exc:
+            return False, f"Erro ao trocar conta: {exc}"
+
     def start(self) -> Dict:
         if self.is_running:
             return {"ok": False, "message": "Bot ja esta em execucao"}
@@ -54,13 +77,13 @@ class BotRunner:
         return {"ok": True, "message": "Bot parado"}
 
     def _seed_state(self, cfg: dict) -> None:
-        """Preenche state com ENV se ainda nao foi editado na UI."""
         with state.lock:
             if not state.asset:
                 state.asset = cfg["ativo"]
-            # se o asset ainda e o default e o ENV e diferente, respeita UI se ja mudou
             state.strategy = cfg["estrategia"]
-            state.account = cfg["tipo_conta"]
+            # so preenche conta se ainda nao foi escolhida na UI
+            if not state.account or state.account not in ("PRACTICE", "REAL"):
+                state.account = (cfg.get("tipo_conta") or "PRACTICE").upper()
             if not state.timeframe:
                 state.timeframe = cfg["timeframe"]
             if not state.valor_entrada:
@@ -91,19 +114,23 @@ class BotRunner:
 
         stop_win = float(state.stop_win or cfg["stop_win"])
         stop_loss = float(state.stop_loss or cfg["stop_loss"])
+        conta = (state.account or cfg["tipo_conta"] or "PRACTICE").upper()
+        if conta not in ("PRACTICE", "REAL"):
+            conta = "PRACTICE"
 
         with state.lock:
             state.bot_running = True
             state.error = None
+            state.account = conta
             state.stop_win = stop_win
             state.stop_loss = stop_loss
             state.started_at = datetime.now(TZ).isoformat()
             state.last_signal = None
             state.confluence = None
-            state.last_message = "Conectando..."
+            state.last_message = f"Conectando ({conta})..."
 
         try:
-            api, _ = connect_iq(cfg["email"], cfg["senha"], cfg["tipo_conta"])
+            api, _ = connect_iq(cfg["email"], cfg["senha"], conta)
             self._api = api
             perfil = json.loads(json.dumps(api.get_profile_ansyc()))
             with state.lock:
@@ -111,7 +138,8 @@ class BotRunner:
                 state.currency = str(perfil.get("currency_char", "R$"))
                 state.user_name = str(perfil.get("name", ""))
                 state.balance = float(api.get_balance())
-                state.last_message = "Conectado. Monitorando..."
+                state.account = conta
+                state.last_message = f"Conectado ({conta}). Monitorando..."
         except Exception as exc:
             with state.lock:
                 state.connected = False
@@ -123,16 +151,26 @@ class BotRunner:
 
         risk = RiskManager(stop_win, stop_loss, state.currency)
         self._risk = risk
-
         ultimo_sinal_ts = 0.0
 
         while not self._stop.is_set() and risk.can_trade:
             try:
-                # configs em tempo real da UI
                 ativo = (state.asset or cfg["ativo"]).upper()
                 timeframe = int(state.timeframe or cfg["timeframe"])
                 valor_entrada = float(state.valor_entrada or cfg["valor_entrada"])
                 expiracao = int(state.expiracao or cfg["expiracao"])
+
+                # se a UI trocou a conta, aplica
+                desired = (state.account or conta).upper()
+                if desired in ("PRACTICE", "REAL") and desired != conta:
+                    try:
+                        api.change_balance(desired)
+                        conta = desired
+                        with state.lock:
+                            state.balance = float(api.get_balance())
+                            state.account = conta
+                    except Exception:
+                        pass
 
                 risk.update_stops(state.stop_win, state.stop_loss)
 
@@ -169,6 +207,7 @@ class BotRunner:
                     state.connected = True
                     state.balance = float(api.get_balance())
                     state.asset = ativo
+                    state.account = conta
 
                 if hasattr(strategy, "diagnose"):
                     try:

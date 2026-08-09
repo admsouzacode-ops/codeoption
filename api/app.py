@@ -25,27 +25,14 @@ COOKIE_NAME = "codeoption_auth"
 COOKIE_MAX_AGE = 60 * 60 * 12
 
 FALLBACK_ASSETS = [
-    "EURUSD-OTC",
-    "GBPUSD-OTC",
-    "USDJPY-OTC",
-    "AUDUSD-OTC",
-    "EURGBP-OTC",
-    "EURJPY-OTC",
-    "GBPJPY-OTC",
-    "USDCHF-OTC",
-    "USDCAD-OTC",
-    "NZDUSD-OTC",
-    "EURUSD",
-    "GBPUSD",
-    "USDJPY",
-    "AUDUSD",
-    "USDCAD",
-    "NZDUSD",
-    "EURGBP",
-    "EURJPY",
+    "EURUSD-OTC", "GBPUSD-OTC", "USDJPY-OTC", "AUDUSD-OTC",
+    "EURGBP-OTC", "EURJPY-OTC", "GBPJPY-OTC", "USDCHF-OTC",
+    "USDCAD-OTC", "NZDUSD-OTC",
+    "EURUSD", "GBPUSD", "USDJPY", "AUDUSD",
+    "USDCAD", "NZDUSD", "EURGBP", "EURJPY",
 ]
 
-app = FastAPI(title="CodeOption", version="1.3.2")
+app = FastAPI(title="CodeOption", version="1.3.3")
 
 
 class LoginBody(BaseModel):
@@ -55,6 +42,7 @@ class LoginBody(BaseModel):
 
 class SettingsBody(BaseModel):
     asset: Optional[str] = None
+    account: Optional[str] = None  # PRACTICE | REAL
     stop_win: Optional[float] = Field(None, gt=0)
     stop_loss: Optional[float] = Field(None, gt=0)
     valor_entrada: Optional[float] = Field(None, gt=0)
@@ -190,10 +178,19 @@ def api_settings(body: SettingsBody):
     from api.state import state
 
     data = body.model_dump(exclude_none=True)
+
+    if body.account is not None:
+        acc = body.account.strip().upper()
+        if acc not in ("PRACTICE", "REAL"):
+            raise HTTPException(status_code=400, detail="Conta deve ser PRACTICE ou REAL")
+        data["account"] = acc
+
     with state.lock:
         for key, value in data.items():
             if key == "asset" and value:
                 state.asset = str(value).upper().strip()
+            elif key == "account" and value:
+                state.account = str(value).upper().strip()
             elif hasattr(state, key):
                 setattr(state, key, value)
 
@@ -205,11 +202,25 @@ def api_settings(body: SettingsBody):
     if body.stop_win is not None or body.stop_loss is not None:
         bot_runner.update_stops(state.stop_win, state.stop_loss)
 
-    return {"ok": True, "message": "Configuracoes salvas", "settings": state.snapshot()}
+    # troca conta na sessao IQ se o bot estiver conectado
+    account_msg = ""
+    if body.account is not None:
+        ok, account_msg = bot_runner.change_account(data["account"])
+        if not ok and bot_runner.is_running:
+            return {
+                "ok": False,
+                "message": account_msg or "Falha ao trocar conta",
+                "settings": state.snapshot(),
+            }
+
+    return {
+        "ok": True,
+        "message": "Configuracoes salvas" + (f" · {account_msg}" if account_msg else ""),
+        "settings": state.snapshot(),
+    }
 
 
 def _parse_open_assets(open_time: dict) -> List[str]:
-    """Todos os pares abertos em turbo/binary: OTC + mercado normal."""
     names = set()
     for market in ("turbo", "binary"):
         bucket = open_time.get(market) or {}
@@ -218,11 +229,9 @@ def _parse_open_assets(open_time: dict) -> List[str]:
                 n = str(name).upper().strip()
                 if n:
                     names.add(n)
-
     all_open = sorted(names)
     otc = [a for a in all_open if "-OTC" in a]
     normal = [a for a in all_open if "-OTC" not in a]
-    # OTC primeiro só para organizar o dropdown
     return otc + normal
 
 
@@ -268,7 +277,10 @@ def _fetch_open_assets() -> dict:
                 "count": len(FALLBACK_ASSETS),
                 "warning": f"Nao conectou: {reason}",
             }
-        tmp.change_balance(cfg["tipo_conta"])
+        from api.state import state
+
+        conta = (state.account or cfg["tipo_conta"] or "PRACTICE").upper()
+        tmp.change_balance(conta)
         open_time = tmp.get_all_open_time()
         assets = _parse_open_assets(open_time)
         if not assets:
@@ -299,7 +311,6 @@ def _fetch_open_assets() -> dict:
 
 @app.get("/api/assets")
 def api_assets():
-    """OTC + mercado normal abertos (turbo/binary)."""
     return _fetch_open_assets()
 
 
