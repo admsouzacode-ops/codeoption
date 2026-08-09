@@ -2,3 +2,5 @@ configobj>=5.0.8
 websocket-client>=1.0.0
 requests>=2.25.0
 pysocks>=1.7.0
+fastapi>=0.110.0
+uvicorn[standard]>=0.27.0
