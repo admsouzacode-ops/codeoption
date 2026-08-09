@@ -10,7 +10,7 @@ import time
 from pathlib import Path
 from typing import List, Optional
 
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -39,9 +39,13 @@ FALLBACK_ASSETS = [
     "GBPUSD",
     "USDJPY",
     "AUDUSD",
+    "USDCAD",
+    "NZDUSD",
+    "EURGBP",
+    "EURJPY",
 ]
 
-app = FastAPI(title="CodeOption", version="1.3.1")
+app = FastAPI(title="CodeOption", version="1.3.2")
 
 
 class LoginBody(BaseModel):
@@ -204,13 +208,9 @@ def api_settings(body: SettingsBody):
     return {"ok": True, "message": "Configuracoes salvas", "settings": state.snapshot()}
 
 
-def _parse_open_assets(open_time: dict, prefer_otc: bool = True) -> List[str]:
-    """
-    Usa apenas turbo/binary (opcoes binarias).
-    Se houver OTC aberto, prioriza OTC (fim de semana / fora do horario).
-    """
+def _parse_open_assets(open_time: dict) -> List[str]:
+    """Todos os pares abertos em turbo/binary: OTC + mercado normal."""
     names = set()
-    # digital costuma trazer dezenas de ativos irrelevantes para binarias
     for market in ("turbo", "binary"):
         bucket = open_time.get(market) or {}
         for name, info in bucket.items():
@@ -220,28 +220,29 @@ def _parse_open_assets(open_time: dict, prefer_otc: bool = True) -> List[str]:
                     names.add(n)
 
     all_open = sorted(names)
-    otc = [a for a in all_open if a.endswith("-OTC") or "-OTC" in a]
+    otc = [a for a in all_open if "-OTC" in a]
+    normal = [a for a in all_open if "-OTC" not in a]
+    # OTC primeiro só para organizar o dropdown
+    return otc + normal
 
-    if prefer_otc and otc:
-        return otc
-    return all_open
 
-
-def _fetch_open_assets(prefer_otc: bool = True) -> dict:
+def _fetch_open_assets() -> dict:
     from api.bot_runner import bot_runner
 
     api = getattr(bot_runner, "_api", None)
     if api is not None:
         try:
             open_time = api.get_all_open_time()
-            assets = _parse_open_assets(open_time, prefer_otc=prefer_otc)
+            assets = _parse_open_assets(open_time)
             if assets:
+                otc_count = sum(1 for a in assets if "-OTC" in a)
                 return {
                     "ok": True,
                     "source": "live",
                     "assets": assets,
                     "count": len(assets),
-                    "prefer_otc": prefer_otc,
+                    "otc_count": otc_count,
+                    "normal_count": len(assets) - otc_count,
                 }
         except Exception as exc:
             return {
@@ -269,13 +270,22 @@ def _fetch_open_assets(prefer_otc: bool = True) -> dict:
             }
         tmp.change_balance(cfg["tipo_conta"])
         open_time = tmp.get_all_open_time()
-        assets = _parse_open_assets(open_time, prefer_otc=prefer_otc)
+        assets = _parse_open_assets(open_time)
+        if not assets:
+            return {
+                "ok": True,
+                "source": "fallback",
+                "assets": FALLBACK_ASSETS,
+                "count": len(FALLBACK_ASSETS),
+            }
+        otc_count = sum(1 for a in assets if "-OTC" in a)
         return {
             "ok": True,
-            "source": "live" if assets else "fallback",
-            "assets": assets or FALLBACK_ASSETS,
-            "count": len(assets or FALLBACK_ASSETS),
-            "prefer_otc": prefer_otc,
+            "source": "live",
+            "assets": assets,
+            "count": len(assets),
+            "otc_count": otc_count,
+            "normal_count": len(assets) - otc_count,
         }
     except Exception as exc:
         return {
@@ -288,8 +298,9 @@ def _fetch_open_assets(prefer_otc: bool = True) -> dict:
 
 
 @app.get("/api/assets")
-def api_assets(prefer_otc: bool = Query(True, description="Prioriza pares OTC abertos")):
-    return _fetch_open_assets(prefer_otc=prefer_otc)
+def api_assets():
+    """OTC + mercado normal abertos (turbo/binary)."""
+    return _fetch_open_assets()
 
 
 @app.post("/api/bot/start")
