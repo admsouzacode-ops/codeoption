@@ -3,7 +3,7 @@
 from iqoptionapi.http.resource import Resource
 
 
-class Login(Resource):
+class Login2FA(Resource):
     """Class for IQ option login resource."""
     # pylint: disable=too-few-public-methods
 
@@ -16,15 +16,17 @@ class Login(Resource):
         """
         return self.api.send_http_request_v2(method="POST", url="https://auth.iqoption.com/api/v2/login",data=data, headers=headers)
 
-    def __call__(self, username, password):
+    def __call__(self, username, password, token_login):
         """Method to get IQ Option API login http request.
 
         :param str username: The username of a IQ Option server.
         :param str password: The password of a IQ Option server.
+        :param str token: The token of a IQ Option server 2FA.
 
         :returns: The instance of :class:`requests.Response`.
         """
         data = {"identifier": username,
-                "password": password}
+                "password": password,
+                "token": token_login}
 
         return self._post(data=data)

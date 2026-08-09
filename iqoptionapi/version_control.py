@@ -1,1 +1,1 @@
-latest_release = "5.2"
+api_version = "7.1.3"

@@ -1,4 +1,4 @@
-"""Module for base IQ Option http resource."""
+"""Module for base IQ Option http base resource."""
 
 
 class Resource(object):
@@ -22,4 +22,4 @@ class Resource(object):
 
         :returns: The instance of :class:`requests.Response`.
         """
-        return self.api.send_http_request_v2(method=method, url=self.url, data=data, params=params, headers=headers)
+        return self.api.send_http_request(self, method, data=data, params=params, headers=headers)
