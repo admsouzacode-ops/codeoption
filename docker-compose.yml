@@ -2,11 +2,13 @@ services:
   bot:
     build: .
     restart: unless-stopped
-    # Nao usar ports: no host — o Dokploy faz o proxy interno
     expose:
       - "8000"
     environment:
       PORT: "8000"
+      ADMIN_USER: ${ADMIN_USER:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD}
+      SESSION_SECRET: ${SESSION_SECRET}
       IQ_EMAIL: ${IQ_EMAIL}
       IQ_PASSWORD: ${IQ_PASSWORD}
       IQ_ACCOUNT: ${IQ_ACCOUNT:-PRACTICE}

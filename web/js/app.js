@@ -46,7 +46,11 @@ function renderTrades(list, mountId) {
 
 async function refresh() {
   try {
-    const res = await fetch("/api/status");
+    const res = await fetch("/api/status", { credentials: "same-origin" });
+    if (res.status === 401) {
+      window.location.href = "/login";
+      return;
+    }
     const data = await res.json();
 
     $("#greeting").textContent = data.user_name ? `Olá, ${data.user_name}` : "Olá";
@@ -96,7 +100,14 @@ async function refresh() {
 $("#bot-toggle").addEventListener("change", async (e) => {
   const on = e.target.checked;
   try {
-    const res = await fetch(on ? "/api/bot/start" : "/api/bot/stop", { method: "POST" });
+    const res = await fetch(on ? "/api/bot/start" : "/api/bot/stop", {
+      method: "POST",
+      credentials: "same-origin",
+    });
+    if (res.status === 401) {
+      window.location.href = "/login";
+      return;
+    }
     const data = await res.json();
     if (!data.ok) {
       e.target.checked = !on;
@@ -108,6 +119,14 @@ $("#bot-toggle").addEventListener("change", async (e) => {
     alert("Erro ao falar com a API");
   }
 });
+
+async function logout() {
+  await fetch("/api/logout", { method: "POST", credentials: "same-origin" });
+  window.location.href = "/login";
+}
+
+const logoutBtn = document.getElementById("logout-btn");
+if (logoutBtn) logoutBtn.addEventListener("click", logout);
 
 refresh();
 setInterval(refresh, 3000);

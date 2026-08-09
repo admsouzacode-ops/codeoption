@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Login · CodeOption</title>
+  <link rel="stylesheet" href="/static/css/style.css" />
+  <style>
+    .login-wrap {
+      min-height: 100dvh;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+      background: linear-gradient(160deg, #f0fdfa 0%, #eff6ff 50%, #f8fafc 100%);
+    }
+    .login-card {
+      width: 100%;
+      max-width: 400px;
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      box-shadow: var(--shadow);
+      padding: 28px 24px;
+    }
+    .login-card h1 {
+      font-size: 1.4rem;
+      margin: 12px 0 4px;
+    }
+    .login-card .logo {
+      width: 48px; height: 48px; border-radius: 14px;
+      background: linear-gradient(135deg, #14b8a6, #0ea5e9);
+      color: #fff; display: grid; place-items: center; font-weight: 800;
+    }
+    .field { margin-top: 14px; }
+    .field label {
+      display: block; font-size: 0.85rem; color: var(--muted); margin-bottom: 6px;
+    }
+    .field input {
+      width: 100%; padding: 12px 14px; border-radius: 12px;
+      border: 1px solid var(--border); font-size: 1rem;
+      outline: none; background: #f8fafc;
+    }
+    .field input:focus { border-color: var(--primary); background: #fff; }
+    .btn {
+      width: 100%; margin-top: 18px; border: 0; cursor: pointer;
+      background: var(--primary); color: #fff; font-weight: 700;
+      padding: 13px; border-radius: 12px; font-size: 1rem;
+    }
+    .btn:disabled { opacity: .6; cursor: not-allowed; }
+    .error {
+      display: none; margin-top: 12px; color: #b91c1c;
+      background: #fef2f2; border-radius: 10px; padding: 10px 12px;
+      font-size: 0.9rem;
+    }
+    .error.show { display: block; }
+  </style>
+</head>
+<body>
+  <div class="login-wrap">
+    <form class="login-card" id="login-form">
+      <div class="logo">IQ</div>
+      <h1>CodeOption</h1>
+      <p class="muted">Entre para acessar o painel do robô</p>
+
+      <div class="field">
+        <label for="username">Usuário</label>
+        <input id="username" name="username" autocomplete="username" required />
+      </div>
+      <div class="field">
+        <label for="password">Senha</label>
+        <input id="password" name="password" type="password" autocomplete="current-password" required />
+      </div>
+
+      <div class="error" id="error"></div>
+      <button class="btn" type="submit" id="btn">Entrar</button>
+    </form>
+  </div>
+
+  <script>
+    const form = document.getElementById("login-form");
+    const error = document.getElementById("error");
+    const btn = document.getElementById("btn");
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      error.classList.remove("show");
+      btn.disabled = true;
+      btn.textContent = "Entrando...";
+
+      const body = new FormData(form);
+      try {
+        const res = await fetch("/api/login", { method: "POST", body });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          error.textContent = data.detail || "Usuario ou senha invalidos";
+          error.classList.add("show");
+          btn.disabled = false;
+          btn.textContent = "Entrar";
+          return;
+        }
+        window.location.href = "/";
+      } catch {
+        error.textContent = "Falha de conexao";
+        error.classList.add("show");
+        btn.disabled = false;
+        btn.textContent = "Entrar";
+      }
+    });
+  </script>
+</body>
+</html>
