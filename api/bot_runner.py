@@ -10,7 +10,7 @@ from typing import Dict, Optional, Tuple
 from zoneinfo import ZoneInfo
 
 from core.connection import connect_iq, ensure_connected
-from core.order import OrderManager
+from core.order import OrderManager, resolve_active_name
 from core.risk import RiskManager
 from core.settings import load_settings
 from strategies import get_strategy
@@ -18,6 +18,22 @@ from strategies import get_strategy
 from api.state import state, time_br, now_br
 
 TZ = ZoneInfo("America/Sao_Paulo")
+
+
+def _normalize_asset(raw: str) -> str:
+    """Preserva -op em minusculo (forma da API)."""
+    name = (raw or "").strip()
+    if not name:
+        return name
+    resolved = resolve_active_name(name)
+    if resolved:
+        return resolved
+    upper = name.upper()
+    if upper.endswith("-OP"):
+        return upper[:-3] + "-op"
+    if upper.endswith("-OTC"):
+        return upper[:-4] + "-OTC"
+    return upper
 
 
 class BotRunner:
@@ -78,7 +94,9 @@ class BotRunner:
     def _seed_state(self, cfg: dict) -> None:
         with state.lock:
             if not state.asset:
-                state.asset = cfg["ativo"]
+                state.asset = _normalize_asset(cfg["ativo"])
+            else:
+                state.asset = _normalize_asset(state.asset)
             state.strategy = cfg["estrategia"]
             if not state.account or state.account not in ("PRACTICE", "REAL"):
                 state.account = (cfg.get("tipo_conta") or "PRACTICE").upper()
@@ -195,7 +213,7 @@ class BotRunner:
                     time.sleep(15)
                     continue
 
-                ativo = (state.asset or cfg["ativo"]).upper()
+                ativo = _normalize_asset(state.asset or cfg["ativo"])
                 timeframe = int(state.timeframe or cfg["timeframe"])
                 valor_entrada = float(state.valor_entrada or cfg["valor_entrada"])
                 expiracao = int(state.expiracao or cfg["expiracao"])
@@ -297,7 +315,6 @@ class BotRunner:
                     resultado = risk.lucro_total - lucro_antes
                     order_error = getattr(orders, "last_error", "") or ""
 
-                    # falha ao abrir ordem (comum em nao-OTC se fechado/opcode)
                     if order_error and abs(resultado) < 1e-9:
                         with state.lock:
                             state.last_signal = None
