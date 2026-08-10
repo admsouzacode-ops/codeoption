@@ -6,6 +6,7 @@ import hashlib
 import hmac
 import os
 import secrets
+import threading
 import time
 from pathlib import Path
 from typing import List, Optional
@@ -29,6 +30,8 @@ FALLBACK_ASSETS = [
     "GBPUSD-op",
     "USDJPY-op",
     "AUDUSD-op",
+    "EURJPY-op",
+    "GBPUSD-op",
     "EURUSD-OTC",
     "GBPUSD-OTC",
     "USDJPY-OTC",
@@ -39,7 +42,12 @@ FALLBACK_ASSETS = [
     "AUDUSD",
 ]
 
-app = FastAPI(title="CodeOption", version="1.4.1")
+# cache simples da lista de ativos
+_ASSETS_CACHE: dict = {"ts": 0.0, "data": None}
+_ASSETS_LOCK = threading.Lock()
+_ASSETS_TTL = 90  # segundos
+
+app = FastAPI(title="CodeOption", version="1.4.2")
 
 
 @app.on_event("startup")
@@ -229,7 +237,6 @@ def api_settings(body: SettingsBody):
     with state.lock:
         for key, value in data.items():
             if key == "asset" and value:
-                # preserva case da API (EURUSD-op, nao EURUSD-OP)
                 resolved = resolve_active_name(str(value).strip()) or str(value).strip()
                 state.asset = resolved
             elif key == "account" and value:
@@ -263,7 +270,6 @@ def api_settings(body: SettingsBody):
 
 
 def _normalize_asset_label(name: str) -> str:
-    """Mantem forma canônica da API para -op (minusculo)."""
     n = str(name).strip()
     if not n:
         return n
@@ -277,100 +283,76 @@ def _normalize_asset_label(name: str) -> str:
 
 def _parse_open_assets(open_time: dict) -> List[str]:
     names = set()
-    for market in ("turbo", "binary"):
+    for market in ("turbo", "binary", "digital"):
         bucket = open_time.get(market) or {}
         for name, info in bucket.items():
             if isinstance(info, dict) and info.get("open"):
                 names.add(_normalize_asset_label(name))
 
     all_open = sorted(names, key=lambda x: x.upper())
-    # ordem: -op (mercado), -OTC, puro
     op = [a for a in all_open if a.endswith("-op")]
     otc = [a for a in all_open if a.endswith("-OTC")]
     normal = [a for a in all_open if not a.endswith("-op") and not a.endswith("-OTC")]
     return op + normal + otc
 
 
+def _assets_payload(assets: List[str], source: str, warning: str = "") -> dict:
+    otc_count = sum(1 for a in assets if a.endswith("-OTC"))
+    op_count = sum(1 for a in assets if a.endswith("-op"))
+    data = {
+        "ok": True,
+        "source": source,
+        "assets": assets,
+        "count": len(assets),
+        "otc_count": otc_count,
+        "op_count": op_count,
+        "normal_count": len(assets) - otc_count - op_count,
+    }
+    if warning:
+        data["warning"] = warning
+    return data
+
+
+def _fetch_from_api(api) -> Optional[dict]:
+    try:
+        open_time = api.get_all_open_time()
+        assets = _parse_open_assets(open_time)
+        if assets:
+            return _assets_payload(assets, "live")
+    except Exception as exc:
+        return _assets_payload(FALLBACK_ASSETS, "fallback", str(exc))
+    return None
+
+
 def _fetch_open_assets() -> dict:
+    """Busca ativos com cache. Nao trava: se bot offline usa lista padrao."""
+    now = time.time()
+    with _ASSETS_LOCK:
+        if _ASSETS_CACHE["data"] and (now - _ASSETS_CACHE["ts"]) < _ASSETS_TTL:
+            cached = dict(_ASSETS_CACHE["data"])
+            cached["cached"] = True
+            return cached
+
     from api.bot_runner import bot_runner
 
     api = getattr(bot_runner, "_api", None)
+
+    # 1) usa sessao do bot se estiver conectado (rapido)
     if api is not None:
-        try:
-            open_time = api.get_all_open_time()
-            assets = _parse_open_assets(open_time)
-            if assets:
-                otc_count = sum(1 for a in assets if a.endswith("-OTC"))
-                op_count = sum(1 for a in assets if a.endswith("-op"))
-                return {
-                    "ok": True,
-                    "source": "live",
-                    "assets": assets,
-                    "count": len(assets),
-                    "otc_count": otc_count,
-                    "op_count": op_count,
-                    "normal_count": len(assets) - otc_count - op_count,
-                }
-        except Exception as exc:
-            return {
-                "ok": True,
-                "source": "fallback",
-                "assets": FALLBACK_ASSETS,
-                "count": len(FALLBACK_ASSETS),
-                "warning": str(exc),
-            }
+        result = _fetch_from_api(api)
+        if result and result.get("source") == "live":
+            with _ASSETS_LOCK:
+                _ASSETS_CACHE["ts"] = time.time()
+                _ASSETS_CACHE["data"] = result
+            return result
 
-    try:
-        from core.settings import load_settings
-        from iqoptionapi.stable_api import IQ_Option
-
-        cfg = load_settings()
-        tmp = IQ_Option(cfg["email"], cfg["senha"])
-        check, reason = tmp.connect()
-        if not check:
-            return {
-                "ok": True,
-                "source": "fallback",
-                "assets": FALLBACK_ASSETS,
-                "count": len(FALLBACK_ASSETS),
-                "warning": f"Nao conectou: {reason}",
-            }
-        from api.state import state
-
-        conta = (state.account or cfg["tipo_conta"] or "PRACTICE").upper()
-        tmp.change_balance(conta)
-        try:
-            tmp.update_ACTIVES_OPCODE()
-        except Exception:
-            pass
-        open_time = tmp.get_all_open_time()
-        assets = _parse_open_assets(open_time)
-        if not assets:
-            return {
-                "ok": True,
-                "source": "fallback",
-                "assets": FALLBACK_ASSETS,
-                "count": len(FALLBACK_ASSETS),
-            }
-        otc_count = sum(1 for a in assets if a.endswith("-OTC"))
-        op_count = sum(1 for a in assets if a.endswith("-op"))
-        return {
-            "ok": True,
-            "source": "live",
-            "assets": assets,
-            "count": len(assets),
-            "otc_count": otc_count,
-            "op_count": op_count,
-            "normal_count": len(assets) - otc_count - op_count,
-        }
-    except Exception as exc:
-        return {
-            "ok": True,
-            "source": "fallback",
-            "assets": FALLBACK_ASSETS,
-            "count": len(FALLBACK_ASSETS),
-            "warning": str(exc),
-        }
+    # 2) bot offline: NAO abre nova conexao (isso travava a UI)
+    #    devolve lista padrao imediata
+    return _assets_payload(
+        FALLBACK_ASSETS,
+        "fallback",
+        "Ligue o robô e clique de novo para buscar ao vivo. Lista padrão por enquanto.",
+    )
 
 
 @app.get("/api/assets")

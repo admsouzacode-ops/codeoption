@@ -2,15 +2,15 @@ const $ = (s) => document.querySelector(s);
 const $$ = (s) => document.querySelectorAll(s);
 
 const FALLBACK_ASSETS = [
+  "EURUSD-op", "GBPUSD-op", "USDJPY-op", "AUDUSD-op",
   "EURUSD-OTC", "GBPUSD-OTC", "USDJPY-OTC", "AUDUSD-OTC",
-  "EURGBP-OTC", "EURJPY-OTC", "GBPJPY-OTC", "USDCHF-OTC",
-  "USDCAD-OTC", "NZDUSD-OTC",
   "EURUSD", "GBPUSD", "USDJPY", "AUDUSD",
 ];
 
 let assetsCache = [...FALLBACK_ASSETS];
 let assetsLoadedOnce = false;
 let settingsDirty = false;
+let fetchingAssets = false;
 
 function money(v, currency = "R$") {
   const n = Number(v || 0);
@@ -132,7 +132,6 @@ function renderConfluence(conf) {
 }
 
 function fillSettingsForm(data) {
-  // badges sempre refletem o servidor
   setFlagBadge("#badge-martingale", !!data.usar_martingale);
   setFlagBadge("#badge-soros", !!data.usar_soros);
 
@@ -223,7 +222,6 @@ $("#bot-toggle").addEventListener("change", async (e) => {
   } catch { e.target.checked = !on; alert("Erro ao falar com a API"); }
 });
 
-// marca formulario como editado para o poll nao sobrescrever
 document.querySelectorAll("#tab-settings input, #tab-settings select").forEach((el) => {
   el.addEventListener("change", () => { settingsDirty = true; });
   el.addEventListener("input", () => { settingsDirty = true; });
@@ -270,7 +268,6 @@ if (saveBtn) {
       } else {
         settingsDirty = false;
         msg.textContent = data.message || "Configurações salvas.";
-        // atualiza badges com o que o servidor confirmou
         if (data.settings) {
           setFlagBadge("#badge-martingale", !!data.settings.usar_martingale);
           setFlagBadge("#badge-soros", !!data.settings.usar_soros);
@@ -285,26 +282,42 @@ if (saveBtn) {
 const fetchBtn = $("#btn-fetch-assets");
 if (fetchBtn) {
   fetchBtn.addEventListener("click", async () => {
+    if (fetchingAssets) return;
+    fetchingAssets = true;
     const msg = $("#assets-msg");
     fetchBtn.disabled = true;
     fetchBtn.textContent = "Buscando...";
-    msg.textContent = "";
+    msg.textContent = "Aguarde...";
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 12000);
+
     try {
-      const res = await fetch("/api/assets", { credentials: "same-origin" });
+      const res = await fetch("/api/assets", {
+        credentials: "same-origin",
+        signal: controller.signal,
+      });
+      clearTimeout(timer);
       const data = await res.json();
       const list = data.assets && data.assets.length ? data.assets : FALLBACK_ASSETS;
       fillAssetSelect(list, $("#input-asset").value, true);
+
       if (data.source === "live") {
-        const otc = data.otc_count ?? list.filter((a) => a.includes("-OTC")).length;
-        const normal = data.normal_count ?? (list.length - otc);
-        msg.textContent = `${data.count} abertos · OTC: ${otc} · Normal: ${normal}`;
+        const otc = data.otc_count ?? 0;
+        const op = data.op_count ?? 0;
+        const normal = data.normal_count ?? 0;
+        msg.textContent = `${data.count} abertos · op: ${op} · normal: ${normal} · OTC: ${otc}`;
       } else {
-        msg.textContent = `Lista padrão (${list.length}). ${data.warning || ""}`;
+        msg.textContent = data.warning || `Lista padrão (${list.length}). Ligue o robô e busque de novo.`;
       }
-    } catch {
+    } catch (err) {
+      clearTimeout(timer);
       fillAssetSelect(FALLBACK_ASSETS, $("#input-asset").value, true);
-      msg.textContent = "Falha na busca. Usando lista padrão.";
+      msg.textContent = err.name === "AbortError"
+        ? "Demorou demais. Use a lista padrão ou ligue o robô e tente de novo."
+        : "Falha na busca. Usando lista padrão.";
     } finally {
+      fetchingAssets = false;
       fetchBtn.disabled = false;
       fetchBtn.textContent = "Buscar ativos abertos";
     }
