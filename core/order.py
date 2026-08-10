@@ -1,14 +1,15 @@
 """Gerenciamento de ordens, martingale e soros.
 
-Nao chama get_all_open_time na hora do buy (trava o bot).
-Tenta BINARY e depois DIGITAL em variantes do ativo.
+Buy direto, sem update_ACTIVES / get_all_open_time (travam em VPS).
+Timeout em cada tentativa de ordem.
 """
 
 from __future__ import annotations
 
 import sys
+import threading
 import time
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from .risk import RiskManager
 
@@ -59,6 +60,30 @@ def resolve_active_name(ativo: str, actives: Optional[Dict] = None) -> Optional[
     return upper
 
 
+def _call_with_timeout(fn, timeout: float = 12.0) -> Tuple[bool, Any]:
+    """Executa fn() com timeout. Retorna (ok, result_or_error)."""
+    box: dict = {"done": False, "ok": False, "value": None}
+
+    def worker() -> None:
+        try:
+            box["value"] = fn()
+            box["ok"] = True
+        except Exception as exc:
+            box["value"] = str(exc)
+            box["ok"] = False
+        finally:
+            box["done"] = True
+
+    t = threading.Thread(target=worker, daemon=True)
+    t.start()
+    t.join(timeout=timeout)
+    if not box["done"]:
+        return False, f"timeout {int(timeout)}s"
+    if not box["ok"]:
+        return False, box["value"]
+    return True, box["value"]
+
+
 class OrderManager:
     def __init__(
         self,
@@ -98,18 +123,12 @@ class OrderManager:
         self.nivel_soros = 0
         return float(valor_base)
 
-    def _refresh_actives_light(self) -> None:
-        """So opcodes — get_all_open_time trava e nao deve rodar no buy."""
-        try:
-            self.api.update_ACTIVES_OPCODE()
-        except Exception as exc:
-            _log(f"update_ACTIVES_OPCODE: {exc}")
-
     def _candidates(self, ativo: str) -> List[str]:
         actives = _get_actives_map()
         resolved = resolve_active_name(ativo, actives) or (ativo or "").strip()
         base = resolved.upper().replace("-OTC", "").replace("-OP", "")
         out: List[str] = []
+        # ordem: o que o usuario escolheu primeiro, depois variantes comuns
         for c in (resolved, f"{base}-op", base, f"{base}-OTC", ativo):
             r = resolve_active_name(c, actives) or c
             if r and r not in out:
@@ -118,31 +137,46 @@ class OrderManager:
 
     def _try_binary(self, ativo: str, entrada: float, direcao: str, expiracao: int):
         _log(f"BINARY buy({entrada}, {ativo}, {direcao}, {expiracao})")
+
+        def _do():
+            return self.api.buy(entrada, ativo, direcao, expiracao)
+
+        ok, result = _call_with_timeout(_do, timeout=12.0)
+        if not ok:
+            _log(f"binary falhou: {result}")
+            return False, result
+
         try:
-            check, order_id = self.api.buy(entrada, ativo, direcao, expiracao)
-            _log(f"binary -> check={check} id={order_id}")
-            return bool(check), order_id
-        except KeyError as exc:
-            msg = f"Opcode ausente '{ativo}': {exc}"
-            _log(msg)
-            return False, msg
-        except Exception as exc:
-            _log(f"binary Exception: {exc}")
-            return False, str(exc)
+            check, order_id = result
+        except Exception:
+            _log(f"binary retorno inesperado: {result}")
+            return False, str(result)
+
+        _log(f"binary -> check={check} id={order_id}")
+        return bool(check), order_id
 
     def _try_digital(self, ativo: str, entrada: float, direcao: str, expiracao: int):
         _log(f"DIGITAL buy_digital_spot_v2({ativo}, {entrada}, {direcao}, {expiracao})")
+
+        def _do():
+            return self.api.buy_digital_spot_v2(ativo, entrada, direcao, expiracao)
+
+        ok, result = _call_with_timeout(_do, timeout=12.0)
+        if not ok:
+            _log(f"digital falhou: {result}")
+            return False, result
+
         try:
-            check, order_id = self.api.buy_digital_spot_v2(ativo, entrada, direcao, expiracao)
-            _log(f"digital -> check={check} id={order_id}")
-            return bool(check), order_id
-        except Exception as exc:
-            _log(f"digital Exception: {exc}")
-            return False, str(exc)
+            check, order_id = result
+        except Exception:
+            _log(f"digital retorno inesperado: {result}")
+            return False, str(result)
+
+        _log(f"digital -> check={check} id={order_id}")
+        return bool(check), order_id
 
     def _open_order(self, ativo: str, entrada: float, direcao: str, expiracao: int):
-        self._refresh_actives_light()
-
+        # SEM update_ACTIVES / get_all_open_time — travam o fluxo no servidor
         direcao = (direcao or "call").lower()
         if direcao not in ("call", "put"):
             direcao = "call"
@@ -151,8 +185,11 @@ class OrderManager:
         force_binary = self.tipo.startswith("binar") or self.tipo.startswith("turbo")
 
         errors: List[str] = []
-        for name in self._candidates(ativo):
-            _log(f"tentando ativo '{name}' (origem '{ativo}')")
+        candidates = self._candidates(ativo)
+        _log(f"candidatos: {candidates}")
+
+        for name in candidates:
+            _log(f"tentando '{name}'")
 
             if not force_digital:
                 check, order_id = self._try_binary(name, entrada, direcao, expiracao)
@@ -170,12 +207,11 @@ class OrderManager:
                     return True, order_id, "digital"
                 errors.append(f"digital/{name}: {order_id}")
 
-        self.last_error = " | ".join(str(e) for e in errors[-6:]) or "Falha ao abrir ordem"
-        _log(f"falha em todas tentativas: {self.last_error}")
+        self.last_error = " | ".join(str(e) for e in errors[-8:]) or "Falha ao abrir ordem"
+        _log(f"falha total: {self.last_error}")
         return False, self.last_error, ""
 
     def _wait_result(self, order_id, tipo_usado: str, expiracao: int) -> Optional[float]:
-        # exp 1 min -> espera ate ~90s; nao fica infinito
         timeout = max(75, int(expiracao) * 60 + 30)
         start = time.time()
         while True:
