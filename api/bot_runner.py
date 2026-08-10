@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 from typing import Dict, Optional, Tuple
 from zoneinfo import ZoneInfo
 
-from core.connection import connect_iq, ensure_connected
+from core.connection import IQConnectionError, connect_iq, ensure_connected
 from core.order import OrderManager, resolve_active_name
 from core.risk import RiskManager
 from core.settings import load_settings
@@ -21,7 +21,6 @@ TZ = ZoneInfo("America/Sao_Paulo")
 
 
 def _normalize_asset(raw: str) -> str:
-    """Preserva -op em minusculo (forma da API)."""
     name = (raw or "").strip()
     if not name:
         return name
@@ -78,14 +77,21 @@ class BotRunner:
             return {"ok": False, "message": "Bot ja esta em execucao"}
 
         self._stop.clear()
+        with state.lock:
+            state.bot_running = True
+            state.connected = False
+            state.error = None
+            state.last_message = "Conectando na IQ Option..."
+
         self._thread = threading.Thread(target=self._loop, daemon=True)
         self._thread.start()
-        return {"ok": True, "message": "Bot iniciado"}
+        return {"ok": True, "message": "Bot iniciado — conectando..."}
 
     def stop(self) -> Dict:
         self._stop.set()
         with state.lock:
             state.bot_running = False
+            state.connected = False
             state.last_signal = None
             state.confluence = None
             state.last_message = "Bot parado"
@@ -140,6 +146,7 @@ class BotRunner:
                 state.error = str(exc)
                 state.last_message = f"Erro config: {exc}"
                 state.bot_running = False
+                state.connected = False
             return
 
         self._seed_state(cfg)
@@ -151,8 +158,6 @@ class BotRunner:
             conta = "PRACTICE"
 
         with state.lock:
-            state.bot_running = True
-            state.error = None
             state.account = conta
             state.stop_win = stop_win
             state.stop_loss = stop_loss
@@ -160,22 +165,44 @@ class BotRunner:
             state.started_at = datetime.now(TZ).isoformat()
             state.last_signal = None
             state.confluence = None
-            state.last_message = f"Conectando ({conta})..."
+            state.last_message = f"Conectando na IQ ({conta})..."
 
         try:
-            api, _ = connect_iq(cfg["email"], cfg["senha"], conta)
+            api, status_msg = connect_iq(cfg["email"], cfg["senha"], conta)
             self._api = api
-            perfil = json.loads(json.dumps(api.get_profile_ansyc()))
+
+            try:
+                perfil = json.loads(json.dumps(api.get_profile_ansyc()))
+                currency = str(perfil.get("currency_char", "R$"))
+                user_name = str(perfil.get("name", ""))
+            except Exception:
+                currency = "R$"
+                user_name = ""
+
+            try:
+                balance = float(api.get_balance())
+            except Exception:
+                balance = 0.0
+
             with state.lock:
                 state.connected = True
-                state.currency = str(perfil.get("currency_char", "R$"))
-                state.user_name = str(perfil.get("name", ""))
-                state.balance = float(api.get_balance())
+                state.currency = currency
+                state.user_name = user_name
+                state.balance = balance
                 state.account = conta
+                state.error = None
                 state.last_message = (
-                    f"Conectado ({conta}). "
-                    f"Stop Win {stop_win:.0f} / Stop Loss {stop_loss:.0f}"
+                    f"Conectado ({conta}) saldo {currency}{balance:.2f} · "
+                    f"SW {stop_win:.0f} / SL {stop_loss:.0f}"
                 )
+        except IQConnectionError as exc:
+            with state.lock:
+                state.connected = False
+                state.bot_running = False
+                state.error = str(exc)
+                state.last_message = f"Falha IQ: {exc}"
+            self._api = None
+            return
         except Exception as exc:
             with state.lock:
                 state.connected = False
@@ -183,6 +210,13 @@ class BotRunner:
                 state.error = str(exc)
                 state.last_message = f"Falha na conexao: {exc}"
             self._api = None
+            return
+
+        if self._stop.is_set():
+            with state.lock:
+                state.bot_running = False
+                state.connected = False
+                state.last_message = "Bot parado"
             return
 
         risk = RiskManager(stop_win, stop_loss, state.currency)
@@ -238,7 +272,7 @@ class BotRunner:
                 orders = OrderManager(
                     api=api,
                     risk=risk,
-                    tipo=cfg["tipo"],
+                    tipo="auto",
                     martingale_niveis=mg_niveis,
                     martingale_fator=float(state.fator_martingale or cfg["fator_martingale"]),
                     usar_soros=bool(state.usar_soros),
@@ -261,13 +295,16 @@ class BotRunner:
                 if not ensure_connected(api, cfg["email"], cfg["senha"]):
                     with state.lock:
                         state.connected = False
-                        state.last_message = "Reconectando..."
+                        state.last_message = "Reconectando IQ Option..."
                     time.sleep(3)
                     continue
 
                 with state.lock:
                     state.connected = True
-                    state.balance = float(api.get_balance())
+                    try:
+                        state.balance = float(api.get_balance())
+                    except Exception:
+                        pass
                     state.asset = ativo
                     state.account = conta
                     state.lucro_dia = risk.lucro_total
@@ -347,7 +384,10 @@ class BotRunner:
                     with state.lock:
                         state.lucro_dia = risk.lucro_total
                         state.last_signal = None
-                        state.balance = float(api.get_balance())
+                        try:
+                            state.balance = float(api.get_balance())
+                        except Exception:
+                            pass
 
                         if not risk.can_trade:
                             if risk.stop_reason == "STOP_WIN":
@@ -393,18 +433,21 @@ class BotRunner:
         with state.lock:
             state.bot_running = False
             state.last_signal = None
-            if risk.stop_reason == "STOP_WIN":
+            if risk is not None and risk.stop_reason == "STOP_WIN":
                 state.last_message = (
                     f"Stop Win atingido ({risk.lucro_total:+.2f}) — bot parado"
                 )
-            elif risk.stop_reason == "STOP_LOSS":
+            elif risk is not None and risk.stop_reason == "STOP_LOSS":
                 state.last_message = (
                     f"Stop Loss atingido ({risk.lucro_total:+.2f}) — bot parado"
                 )
             elif not str(state.last_message).startswith("Bot parado") and not str(
                 state.last_message
             ).startswith("Stop "):
-                state.last_message = "Bot finalizado"
+                if not state.connected:
+                    pass  # mantem mensagem de falha
+                else:
+                    state.last_message = "Bot finalizado"
 
         self._risk = None
         self._api = None

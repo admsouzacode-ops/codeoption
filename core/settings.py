@@ -39,6 +39,18 @@ def _env_int(key: str, default: int) -> int:
     return int(float(raw))
 
 
+def _normalize_asset_env(value: str) -> str:
+    raw = (value or "").strip()
+    if not raw:
+        return "EURUSD-OTC"
+    upper = raw.upper()
+    if upper.endswith("-OP"):
+        return upper[:-3] + "-op"
+    if upper.endswith("-OTC"):
+        return upper[:-4] + "-OTC"
+    return upper
+
+
 def _from_config_file(path: str = "config.txt") -> Dict[str, Any]:
     if ConfigObj is None or not os.path.exists(path):
         return {}
@@ -83,7 +95,7 @@ def load_settings() -> Dict[str, Any]:
         "email": _env("IQ_EMAIL", file_cfg.get("email")),
         "senha": _env("IQ_PASSWORD", file_cfg.get("senha")),
         "tipo_conta": (_env("IQ_ACCOUNT", file_cfg.get("tipo_conta", "PRACTICE")) or "PRACTICE").upper(),
-        "tipo": (_env("IQ_ORDER_TYPE", file_cfg.get("tipo", "binarias")) or "binarias").lower(),
+        "tipo": (_env("IQ_ORDER_TYPE", file_cfg.get("tipo", "auto")) or "auto").lower(),
         "valor_entrada": _env_float("IQ_ENTRY_AMOUNT", float(file_cfg.get("valor_entrada", 2))),
         "expiracao": _env_int("IQ_EXPIRATION", int(file_cfg.get("expiracao", 1))),
         "stop_win": _env_float("IQ_STOP_WIN", float(file_cfg.get("stop_win", 50))),
@@ -94,7 +106,7 @@ def load_settings() -> Dict[str, Any]:
         "usar_soros": _env_bool("IQ_SOROS", bool(file_cfg.get("usar_soros", False))),
         "niveis_soros": _env_int("IQ_SOROS_LEVELS", int(file_cfg.get("niveis_soros", 2))),
         "estrategia": (_env("IQ_STRATEGY", file_cfg.get("estrategia", "escadinha")) or "escadinha").lower(),
-        "ativo": (_env("IQ_ASSET", file_cfg.get("ativo", "EURUSD-OTC")) or "EURUSD-OTC").upper(),
+        "ativo": _normalize_asset_env(_env("IQ_ASSET", file_cfg.get("ativo", "EURUSD-OTC")) or "EURUSD-OTC"),
         "timeframe": _env_int("IQ_TIMEFRAME", int(file_cfg.get("timeframe", 60))),
         "min_velas": _env_int("IQ_MIN_CANDLES", int(file_cfg.get("min_velas", 3))),
         "ema_rapida": _env_int("IQ_EMA_FAST", int(file_cfg.get("ema_rapida", 9))),
@@ -103,7 +115,6 @@ def load_settings() -> Dict[str, Any]:
         "micro_mult": _env_int("IQ_MICRO_MULT", int(file_cfg.get("micro_mult", 5))),
         "macro_mult": _env_int("IQ_MACRO_MULT", int(file_cfg.get("macro_mult", 15))),
         "exigir_confluencia": _env_bool("IQ_CONFLUENCIA", bool(file_cfg.get("exigir_confluencia", True))),
-        # qualidade do sinal
         "min_corpo_pct": _env_float("IQ_MIN_BODY_PCT", float(file_cfg.get("min_corpo_pct", 0.40))),
         "max_losses_pause": _env_int("IQ_MAX_LOSSES_PAUSE", int(file_cfg.get("max_losses_pause", 2))),
         "pause_minutes": _env_int("IQ_PAUSE_MINUTES", int(file_cfg.get("pause_minutes", 20))),
@@ -114,8 +125,7 @@ def load_settings() -> Dict[str, Any]:
 
     if not settings["email"] or not settings["senha"]:
         raise ValueError(
-            "Credenciais ausentes. Defina IQ_EMAIL e IQ_PASSWORD no environment do Dokploy "
-            "ou preencha config.txt localmente."
+            "Credenciais ausentes. Defina IQ_EMAIL e IQ_PASSWORD no environment do Dokploy."
         )
 
     if not settings["usar_martingale"]:

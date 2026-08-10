@@ -2,64 +2,90 @@
 
 from __future__ import annotations
 
-import sys
 from typing import Tuple
 
 from iqoptionapi.stable_api import IQ_Option
+
+
+class IQConnectionError(Exception):
+    """Falha ao conectar na IQ Option."""
 
 
 def connect_iq(email: str, senha: str, tipo_conta: str = "PRACTICE") -> Tuple[IQ_Option, str]:
     """
     Conecta na IQ Option e seleciona a conta (PRACTICE/REAL).
 
-    Returns:
-        (api, mensagem_status)
+    Raises:
+        IQConnectionError se falhar (nao mata o processo web).
     """
+    if not email or not senha:
+        raise IQConnectionError("IQ_EMAIL / IQ_PASSWORD nao configurados no environment.")
+
+    print(f"[connect] conectando como {email[:3]}***...")
     api = IQ_Option(email, senha)
-    check, reason = api.connect()
+
+    try:
+        check, reason = api.connect()
+    except Exception as exc:
+        raise IQConnectionError(f"Excecao no connect(): {exc}") from exc
+
+    print(f"[connect] check={check} reason={reason}")
 
     if not check:
-        if isinstance(reason, str) and "invalid_credentials" in reason:
-            print("Email ou senha incorreta.")
-        else:
-            print("Falha na conexao:", reason)
-        sys.exit(1)
+        reason_s = str(reason)
+        if "invalid_credentials" in reason_s.lower():
+            raise IQConnectionError("Email ou senha invalidos (IQ_EMAIL / IQ_PASSWORD).")
+        if reason_s == "2FA":
+            raise IQConnectionError("Conta com 2FA. Desative 2FA ou use conta sem 2FA.")
+        raise IQConnectionError(f"Falha na conexao IQ Option: {reason}")
 
     tipo_conta = (tipo_conta or "PRACTICE").upper()
     if tipo_conta not in ("PRACTICE", "REAL"):
         tipo_conta = "PRACTICE"
 
-    api.change_balance(tipo_conta)
+    try:
+        api.change_balance(tipo_conta)
+    except Exception as exc:
+        print(f"[connect] aviso change_balance: {exc}")
 
-    # Atualiza lista de ativos (essencial para pares nao-OTC)
+    # NAO chama get_all_open_time aqui (trava). Atualiza opcodes leve.
     try:
         api.update_ACTIVES_OPCODE()
     except Exception as exc:
-        print("Aviso update_ACTIVES_OPCODE:", exc)
-    try:
-        api.get_all_open_time()
-    except Exception as exc:
-        print("Aviso get_all_open_time:", exc)
+        print(f"[connect] aviso update_ACTIVES_OPCODE: {exc}")
 
-    saldo = api.get_balance()
+    try:
+        saldo = float(api.get_balance())
+    except Exception:
+        saldo = 0.0
+
     status = f"Conectado | Conta: {tipo_conta} | Saldo: {saldo}"
-    print(status)
+    print(f"[connect] {status}")
     return api, status
 
 
 def ensure_connected(api: IQ_Option, email: str, senha: str) -> bool:
     """Reconecta se a websocket cair."""
-    if api.check_connect():
-        return True
-    print("Conexao perdida. Tentando reconectar...")
-    check, reason = api.connect()
+    try:
+        if api.check_connect():
+            return True
+    except Exception:
+        pass
+
+    print("[connect] conexao perdida, reconectando...")
+    try:
+        check, reason = api.connect()
+    except Exception as exc:
+        print(f"[connect] falha reconectar: {exc}")
+        return False
+
     if check:
         try:
             api.update_ACTIVES_OPCODE()
-            api.get_all_open_time()
         except Exception:
             pass
-        print("Reconectado com sucesso.")
+        print("[connect] reconectado")
         return True
-    print("Falha ao reconectar:", reason)
+
+    print(f"[connect] falha reconectar: {reason}")
     return False
