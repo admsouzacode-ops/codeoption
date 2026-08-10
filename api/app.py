@@ -25,14 +25,21 @@ COOKIE_NAME = "codeoption_auth"
 COOKIE_MAX_AGE = 60 * 60 * 12
 
 FALLBACK_ASSETS = [
-    "EURUSD-OTC", "GBPUSD-OTC", "USDJPY-OTC", "AUDUSD-OTC",
-    "EURGBP-OTC", "EURJPY-OTC", "GBPJPY-OTC", "USDCHF-OTC",
-    "USDCAD-OTC", "NZDUSD-OTC",
-    "EURUSD", "GBPUSD", "USDJPY", "AUDUSD",
-    "USDCAD", "NZDUSD", "EURGBP", "EURJPY",
+    "EURUSD-op",
+    "GBPUSD-op",
+    "USDJPY-op",
+    "AUDUSD-op",
+    "EURUSD-OTC",
+    "GBPUSD-OTC",
+    "USDJPY-OTC",
+    "AUDUSD-OTC",
+    "EURUSD",
+    "GBPUSD",
+    "USDJPY",
+    "AUDUSD",
 ]
 
-app = FastAPI(title="CodeOption", version="1.4.0")
+app = FastAPI(title="CodeOption", version="1.4.1")
 
 
 @app.on_event("startup")
@@ -45,8 +52,7 @@ def _hydrate_settings() -> None:
         state.hydrate_from_settings(cfg)
         print(
             f"[startup] settings: MG={state.usar_martingale} "
-            f"Soros={state.usar_soros} conta={state.account} ativo={state.asset} "
-            f"corpo={state.min_corpo_pct}"
+            f"Soros={state.usar_soros} conta={state.account} ativo={state.asset}"
         )
     except Exception as exc:
         print(f"[startup] hydrate skip: {exc}")
@@ -199,6 +205,7 @@ def api_status(request: Request):
 def api_settings(body: SettingsBody):
     from api.bot_runner import bot_runner
     from api.state import state
+    from core.order import resolve_active_name
 
     data = body.model_dump(exclude_none=True)
 
@@ -222,7 +229,9 @@ def api_settings(body: SettingsBody):
     with state.lock:
         for key, value in data.items():
             if key == "asset" and value:
-                state.asset = str(value).upper().strip()
+                # preserva case da API (EURUSD-op, nao EURUSD-OP)
+                resolved = resolve_active_name(str(value).strip()) or str(value).strip()
+                state.asset = resolved
             elif key == "account" and value:
                 state.account = str(value).upper().strip()
             elif hasattr(state, key):
@@ -253,19 +262,33 @@ def api_settings(body: SettingsBody):
     }
 
 
+def _normalize_asset_label(name: str) -> str:
+    """Mantem forma canônica da API para -op (minusculo)."""
+    n = str(name).strip()
+    if not n:
+        return n
+    upper = n.upper()
+    if upper.endswith("-OP"):
+        return upper[:-3] + "-op"
+    if upper.endswith("-OTC"):
+        return upper[:-4] + "-OTC"
+    return upper
+
+
 def _parse_open_assets(open_time: dict) -> List[str]:
     names = set()
     for market in ("turbo", "binary"):
         bucket = open_time.get(market) or {}
         for name, info in bucket.items():
             if isinstance(info, dict) and info.get("open"):
-                n = str(name).upper().strip()
-                if n:
-                    names.add(n)
-    all_open = sorted(names)
-    otc = [a for a in all_open if "-OTC" in a]
-    normal = [a for a in all_open if "-OTC" not in a]
-    return otc + normal
+                names.add(_normalize_asset_label(name))
+
+    all_open = sorted(names, key=lambda x: x.upper())
+    # ordem: -op (mercado), -OTC, puro
+    op = [a for a in all_open if a.endswith("-op")]
+    otc = [a for a in all_open if a.endswith("-OTC")]
+    normal = [a for a in all_open if not a.endswith("-op") and not a.endswith("-OTC")]
+    return op + normal + otc
 
 
 def _fetch_open_assets() -> dict:
@@ -277,14 +300,16 @@ def _fetch_open_assets() -> dict:
             open_time = api.get_all_open_time()
             assets = _parse_open_assets(open_time)
             if assets:
-                otc_count = sum(1 for a in assets if "-OTC" in a)
+                otc_count = sum(1 for a in assets if a.endswith("-OTC"))
+                op_count = sum(1 for a in assets if a.endswith("-op"))
                 return {
                     "ok": True,
                     "source": "live",
                     "assets": assets,
                     "count": len(assets),
                     "otc_count": otc_count,
-                    "normal_count": len(assets) - otc_count,
+                    "op_count": op_count,
+                    "normal_count": len(assets) - otc_count - op_count,
                 }
         except Exception as exc:
             return {
@@ -314,6 +339,10 @@ def _fetch_open_assets() -> dict:
 
         conta = (state.account or cfg["tipo_conta"] or "PRACTICE").upper()
         tmp.change_balance(conta)
+        try:
+            tmp.update_ACTIVES_OPCODE()
+        except Exception:
+            pass
         open_time = tmp.get_all_open_time()
         assets = _parse_open_assets(open_time)
         if not assets:
@@ -323,14 +352,16 @@ def _fetch_open_assets() -> dict:
                 "assets": FALLBACK_ASSETS,
                 "count": len(FALLBACK_ASSETS),
             }
-        otc_count = sum(1 for a in assets if "-OTC" in a)
+        otc_count = sum(1 for a in assets if a.endswith("-OTC"))
+        op_count = sum(1 for a in assets if a.endswith("-op"))
         return {
             "ok": True,
             "source": "live",
             "assets": assets,
             "count": len(assets),
             "otc_count": otc_count,
-            "normal_count": len(assets) - otc_count,
+            "op_count": op_count,
+            "normal_count": len(assets) - otc_count - op_count,
         }
     except Exception as exc:
         return {

@@ -3,11 +3,65 @@
 from __future__ import annotations
 
 import time
-from typing import Optional, Tuple
-
-from iqoptionapi.constants import ACTIVES as OP_ACTIVES
+from typing import Dict, Optional, Tuple
 
 from .risk import RiskManager
+
+
+def _get_actives_map() -> Dict:
+    try:
+        import iqoptionapi.constants as constants
+
+        return constants.ACTIVES or {}
+    except Exception:
+        return {}
+
+
+def resolve_active_name(ativo: str, actives: Optional[Dict] = None) -> Optional[str]:
+    """
+    Resolve o nome exato no dicionario ACTIVES da IQ Option.
+
+    A API usa chaves sensiveis a maiusculas:
+      EURUSD, EURUSD-OTC, EURUSD-op
+    (nao EURUSD-OP)
+    """
+    raw = (ativo or "").strip()
+    if not raw:
+        return None
+
+    actives = actives if actives is not None else _get_actives_map()
+    if not actives:
+        return raw
+
+    # match exato
+    if raw in actives:
+        return raw
+
+    upper = raw.upper()
+    # mapa case-insensitive: UPPER -> chave real
+    upper_map = {str(k).upper(): k for k in actives.keys()}
+
+    if upper in upper_map:
+        return upper_map[upper]
+
+    # candidatos comuns
+    base = upper.replace("-OTC", "").replace("-OP", "")
+    candidates = [
+        base,
+        f"{base}-OTC",
+        f"{base}-op",  # forma correta na API
+        f"{base}-OP",
+        raw,
+        upper,
+    ]
+
+    for cand in candidates:
+        if cand in actives:
+            return cand
+        if cand.upper() in upper_map:
+            return upper_map[cand.upper()]
+
+    return None
 
 
 class OrderManager:
@@ -61,98 +115,55 @@ class OrderManager:
         except Exception:
             pass
 
-    def _resolve_asset(self, ativo: str) -> Optional[str]:
-        """Resolve o nome do ativo no dicionario ACTIVES da API."""
-        name = (ativo or "").upper().strip()
-        if not name:
-            return None
-
-        # tenta atualizar opcodes (importante para mercado aberto)
-        self._refresh_actives()
-
-        actives = getattr(self.api, "ACTIVES", None) or OP_ACTIVES
-        try:
-            from iqoptionapi.constants import ACTIVES as live_actives
-
-            actives = live_actives
-        except Exception:
-            pass
-
-        # tambem olha OP_code se existir no modulo
-        try:
-            import iqoptionapi.constants as constants
-
-            actives = constants.ACTIVES
-        except Exception:
-            pass
-
-        candidates = [name]
-        if name.endswith("-OTC"):
-            candidates.append(name.replace("-OTC", ""))
-        else:
-            candidates.append(f"{name}-OTC")
-
-        # variantes comuns
-        for c in list(candidates):
-            candidates.append(c.replace("/", ""))
-
-        for cand in candidates:
-            if cand in actives:
-                return cand
-
-        # busca case-insensitive / parcial
-        upper_map = {str(k).upper(): k for k in actives.keys()}
-        for cand in candidates:
-            if cand in upper_map:
-                return upper_map[cand]
-
-        return None
-
     def _is_open(self, ativo: str) -> Tuple[bool, str]:
-        """Verifica se o ativo esta aberto em turbo ou binary."""
         try:
             open_time = self.api.get_all_open_time()
         except Exception as exc:
-            return True, f"nao foi possivel checar open_time: {exc}"
+            return True, f"nao checou open_time: {exc}"
 
+        # open_time keys podem vir com case diferente
         for market in ("turbo", "binary"):
             bucket = open_time.get(market) or {}
-            info = bucket.get(ativo)
-            if isinstance(info, dict) and info.get("open"):
-                return True, market
-
-        # tenta sem -OTC / com -OTC
-        alt = ativo.replace("-OTC", "") if "-OTC" in ativo else f"{ativo}-OTC"
-        for market in ("turbo", "binary"):
-            bucket = open_time.get(market) or {}
-            info = bucket.get(alt)
-            if isinstance(info, dict) and info.get("open"):
-                return True, market
+            # match case-insensitive
+            for name, info in bucket.items():
+                if str(name).upper() == str(ativo).upper() and isinstance(info, dict) and info.get("open"):
+                    return True, market
 
         return False, "fechado"
 
     def _open_order(self, ativo: str, entrada: float, direcao: str, expiracao: int):
-        """Abre ordem binaria/turbo ou digital conforme tipo."""
-        resolved = self._resolve_asset(ativo)
+        self._refresh_actives()
+        actives = _get_actives_map()
+
+        resolved = resolve_active_name(ativo, actives)
         if not resolved:
-            self.last_error = f"Ativo '{ativo}' nao encontrado na API (opcode)."
+            self.last_error = (
+                f"Ativo '{ativo}' nao encontrado na API. "
+                f"Tente EURUSD, EURUSD-OTC ou EURUSD-op."
+            )
             print(self.last_error)
             return False, self.last_error
 
         aberto, market = self._is_open(resolved)
         if not aberto:
-            # tenta o alternativo OTC/normal
-            alt = resolved.replace("-OTC", "") if "-OTC" in resolved else f"{resolved}-OTC"
-            alt_resolved = self._resolve_asset(alt)
-            if alt_resolved:
-                aberto2, market2 = self._is_open(alt_resolved)
-                if aberto2:
+            # tenta alternativas do mesmo par
+            base = resolved.upper().replace("-OTC", "").replace("-OP", "")
+            for alt in (base, f"{base}-OTC", f"{base}-op"):
+                alt_resolved = resolve_active_name(alt, actives)
+                if not alt_resolved or alt_resolved == resolved:
+                    continue
+                ok2, market2 = self._is_open(alt_resolved)
+                if ok2:
                     resolved = alt_resolved
                     market = market2
                     aberto = True
+                    break
 
         if not aberto:
-            self.last_error = f"Ativo '{resolved}' esta fechado no momento."
+            self.last_error = (
+                f"Ativo '{resolved}' fechado agora. "
+                f"Mercado normal so abre em horario comercial."
+            )
             print(self.last_error)
             return False, self.last_error
 
@@ -160,19 +171,19 @@ class OrderManager:
         if direcao not in ("call", "put"):
             direcao = "call"
 
-        # digital
+        print(f">> Abrindo ordem em '{resolved}' (origem '{ativo}', market={market})")
+
         if self.tipo.startswith("digital"):
             check, order_id = self.api.buy_digital_spot_v2(
                 resolved, entrada, direcao, expiracao
             )
             return check, order_id
 
-        # binarias / turbo (padrao)
         try:
             check, order_id = self.api.buy(entrada, resolved, direcao, expiracao)
             return check, order_id
         except KeyError:
-            self.last_error = f"Opcode ausente para '{resolved}'. Atualize ativos."
+            self.last_error = f"Opcode ausente para '{resolved}'."
             print(self.last_error)
             return False, self.last_error
         except Exception as exc:
