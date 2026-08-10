@@ -32,12 +32,11 @@ FALLBACK_ASSETS = [
     "USDCAD", "NZDUSD", "EURGBP", "EURJPY",
 ]
 
-app = FastAPI(title="CodeOption", version="1.3.4")
+app = FastAPI(title="CodeOption", version="1.4.0")
 
 
 @app.on_event("startup")
 def _hydrate_settings() -> None:
-    """Carrega ENV para o state ao subir o container."""
     try:
         from api.state import state
         from core.settings import load_settings
@@ -46,7 +45,8 @@ def _hydrate_settings() -> None:
         state.hydrate_from_settings(cfg)
         print(
             f"[startup] settings: MG={state.usar_martingale} "
-            f"Soros={state.usar_soros} conta={state.account} ativo={state.asset}"
+            f"Soros={state.usar_soros} conta={state.account} ativo={state.asset} "
+            f"corpo={state.min_corpo_pct}"
         )
     except Exception as exc:
         print(f"[startup] hydrate skip: {exc}")
@@ -72,6 +72,12 @@ class SettingsBody(BaseModel):
     micro_mult: Optional[int] = Field(None, ge=2)
     macro_mult: Optional[int] = Field(None, ge=3)
     exigir_confluencia: Optional[bool] = None
+    min_corpo_pct: Optional[float] = Field(None, ge=0, le=0.9)
+    max_losses_pause: Optional[int] = Field(None, ge=0)
+    pause_minutes: Optional[int] = Field(None, ge=0)
+    usar_filtro_horario: Optional[bool] = None
+    hora_inicio: Optional[int] = Field(None, ge=0, le=23)
+    hora_fim: Optional[int] = Field(None, ge=0, le=23)
     usar_martingale: Optional[bool] = None
     niveis_martingale: Optional[int] = Field(None, ge=0)
     fator_martingale: Optional[float] = Field(None, gt=1)
@@ -202,15 +208,16 @@ def api_settings(body: SettingsBody):
             raise HTTPException(status_code=400, detail="Conta deve ser PRACTICE ou REAL")
         data["account"] = acc
 
-    # bools explicitos (mesmo False)
-    if body.usar_martingale is not None:
-        data["usar_martingale"] = bool(body.usar_martingale)
-    if body.usar_soros is not None:
-        data["usar_soros"] = bool(body.usar_soros)
-    if body.usar_filtro_ema is not None:
-        data["usar_filtro_ema"] = bool(body.usar_filtro_ema)
-    if body.exigir_confluencia is not None:
-        data["exigir_confluencia"] = bool(body.exigir_confluencia)
+    for flag in (
+        "usar_martingale",
+        "usar_soros",
+        "usar_filtro_ema",
+        "exigir_confluencia",
+        "usar_filtro_horario",
+    ):
+        val = getattr(body, flag, None)
+        if val is not None:
+            data[flag] = bool(val)
 
     with state.lock:
         for key, value in data.items():
