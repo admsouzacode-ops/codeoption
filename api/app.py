@@ -42,12 +42,11 @@ FALLBACK_ASSETS = [
     "AUDUSD",
 ]
 
-# cache simples da lista de ativos
 _ASSETS_CACHE: dict = {"ts": 0.0, "data": None}
 _ASSETS_LOCK = threading.Lock()
-_ASSETS_TTL = 90  # segundos
+_ASSETS_TTL = 90
 
-app = FastAPI(title="CodeOption", version="1.4.2")
+app = FastAPI(title="CodeOption", version="1.5.0")
 
 
 @app.on_event("startup")
@@ -59,11 +58,12 @@ def _hydrate_settings() -> None:
         cfg = load_settings()
         state.hydrate_from_settings(cfg)
         print(
-            f"[startup] settings: MG={state.usar_martingale} "
-            f"Soros={state.usar_soros} conta={state.account} ativo={state.asset}"
+            f"[startup] settings: strat={state.strategy} MG={state.usar_martingale} "
+            f"Soros={state.usar_soros} conta={state.account} ativo={state.asset}",
+            flush=True,
         )
     except Exception as exc:
-        print(f"[startup] hydrate skip: {exc}")
+        print(f"[startup] hydrate skip: {exc}", flush=True)
 
 
 class LoginBody(BaseModel):
@@ -74,6 +74,7 @@ class LoginBody(BaseModel):
 class SettingsBody(BaseModel):
     asset: Optional[str] = None
     account: Optional[str] = None
+    strategy: Optional[str] = None
     stop_win: Optional[float] = Field(None, gt=0)
     stop_loss: Optional[float] = Field(None, gt=0)
     valor_entrada: Optional[float] = Field(None, gt=0)
@@ -223,6 +224,12 @@ def api_settings(body: SettingsBody):
             raise HTTPException(status_code=400, detail="Conta deve ser PRACTICE ou REAL")
         data["account"] = acc
 
+    if body.strategy is not None:
+        strat = body.strategy.strip().lower()
+        if strat not in ("escadinha", "trend_pullback"):
+            raise HTTPException(status_code=400, detail="Estrategia invalida")
+        data["strategy"] = strat
+
     for flag in (
         "usar_martingale",
         "usar_soros",
@@ -241,6 +248,8 @@ def api_settings(body: SettingsBody):
                 state.asset = resolved
             elif key == "account" and value:
                 state.account = str(value).upper().strip()
+            elif key == "strategy" and value:
+                state.strategy = str(value).lower().strip()
             elif hasattr(state, key):
                 setattr(state, key, value)
 
@@ -325,7 +334,6 @@ def _fetch_from_api(api) -> Optional[dict]:
 
 
 def _fetch_open_assets() -> dict:
-    """Busca ativos com cache. Nao trava: se bot offline usa lista padrao."""
     now = time.time()
     with _ASSETS_LOCK:
         if _ASSETS_CACHE["data"] and (now - _ASSETS_CACHE["ts"]) < _ASSETS_TTL:
@@ -337,7 +345,6 @@ def _fetch_open_assets() -> dict:
 
     api = getattr(bot_runner, "_api", None)
 
-    # 1) usa sessao do bot se estiver conectado (rapido)
     if api is not None:
         result = _fetch_from_api(api)
         if result and result.get("source") == "live":
@@ -346,8 +353,6 @@ def _fetch_open_assets() -> dict:
                 _ASSETS_CACHE["data"] = result
             return result
 
-    # 2) bot offline: NAO abre nova conexao (isso travava a UI)
-    #    devolve lista padrao imediata
     return _assets_payload(
         FALLBACK_ASSETS,
         "fallback",
