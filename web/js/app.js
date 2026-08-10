@@ -123,10 +123,10 @@ function renderConfluence(conf) {
   const summary = $("#conf-summary");
   if (!summary) return;
   if (conf.aligned && conf.direction) {
-    summary.textContent = `✓ Alinhado em ${conf.direction} — pronto para entrada`;
+    summary.textContent = `✓ Setup OK em ${conf.direction} — pronto para entrada`;
     summary.style.color = "#047857";
   } else {
-    summary.textContent = "Aguardando as 3 tendências na mesma direção...";
+    summary.textContent = "Aguardando tendência + pullback + confirmação...";
     summary.style.color = "";
   }
 }
@@ -140,6 +140,8 @@ function fillSettingsForm(data) {
   fillAssetSelect(null, data.asset, false);
   const acc = (data.account || "PRACTICE").toUpperCase();
   setIfIdle("#input-account", acc === "REAL" ? "REAL" : "PRACTICE");
+  const strat = (data.strategy || "trend_pullback").toLowerCase();
+  setIfIdle("#input-strategy", strat === "escadinha" ? "escadinha" : "trend_pullback");
   setIfIdle("#input-valor", data.valor_entrada);
   setIfIdle("#input-expiracao", data.expiracao);
   setIfIdle("#input-timeframe", data.timeframe);
@@ -232,6 +234,7 @@ if (saveBtn) {
   saveBtn.addEventListener("click", async () => {
     const payload = {
       account: $("#input-account").value,
+      strategy: $("#input-strategy")?.value || "trend_pullback",
       asset: $("#input-asset").value,
       valor_entrada: Number($("#input-valor").value),
       expiracao: Number($("#input-expiracao").value),
