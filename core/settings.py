@@ -52,7 +52,7 @@ def _from_config_file(path: str = "config.txt") -> Dict[str, Any]:
         "expiracao": cfg.get("AJUSTES", {}).get("expiracao", 1),
         "stop_win": cfg.get("AJUSTES", {}).get("stop_win", 50),
         "stop_loss": cfg.get("AJUSTES", {}).get("stop_loss", 30),
-        "usar_martingale": str(cfg.get("MARTINGALE", {}).get("usar_martingale", "S")).upper() == "S",
+        "usar_martingale": str(cfg.get("MARTINGALE", {}).get("usar_martingale", "N")).upper() == "S",
         "niveis_martingale": cfg.get("MARTINGALE", {}).get("niveis_martingale", 2),
         "fator_martingale": cfg.get("MARTINGALE", {}).get("fator_martingale", 2.0),
         "usar_soros": str(cfg.get("SOROS", {}).get("usar_soros", "N")).upper() == "S",
@@ -67,6 +67,12 @@ def _from_config_file(path: str = "config.txt") -> Dict[str, Any]:
         "micro_mult": cfg.get("ESCADINHA", {}).get("micro_mult", 5),
         "macro_mult": cfg.get("ESCADINHA", {}).get("macro_mult", 15),
         "exigir_confluencia": str(cfg.get("ESCADINHA", {}).get("exigir_confluencia", "S")).upper() == "S",
+        "min_corpo_pct": cfg.get("ESCADINHA", {}).get("min_corpo_pct", 0.40),
+        "max_losses_pause": cfg.get("ESCADINHA", {}).get("max_losses_pause", 2),
+        "pause_minutes": cfg.get("ESCADINHA", {}).get("pause_minutes", 20),
+        "hora_inicio": cfg.get("ESCADINHA", {}).get("hora_inicio", 0),
+        "hora_fim": cfg.get("ESCADINHA", {}).get("hora_fim", 23),
+        "usar_filtro_horario": str(cfg.get("ESCADINHA", {}).get("usar_filtro_horario", "N")).upper() == "S",
     }
 
 
@@ -82,7 +88,7 @@ def load_settings() -> Dict[str, Any]:
         "expiracao": _env_int("IQ_EXPIRATION", int(file_cfg.get("expiracao", 1))),
         "stop_win": _env_float("IQ_STOP_WIN", float(file_cfg.get("stop_win", 50))),
         "stop_loss": _env_float("IQ_STOP_LOSS", float(file_cfg.get("stop_loss", 30))),
-        "usar_martingale": _env_bool("IQ_MARTINGALE", bool(file_cfg.get("usar_martingale", True))),
+        "usar_martingale": _env_bool("IQ_MARTINGALE", bool(file_cfg.get("usar_martingale", False))),
         "niveis_martingale": _env_int("IQ_MARTINGALE_LEVELS", int(file_cfg.get("niveis_martingale", 2))),
         "fator_martingale": _env_float("IQ_MARTINGALE_FACTOR", float(file_cfg.get("fator_martingale", 2.0))),
         "usar_soros": _env_bool("IQ_SOROS", bool(file_cfg.get("usar_soros", False))),
@@ -94,10 +100,16 @@ def load_settings() -> Dict[str, Any]:
         "ema_rapida": _env_int("IQ_EMA_FAST", int(file_cfg.get("ema_rapida", 9))),
         "ema_lenta": _env_int("IQ_EMA_SLOW", int(file_cfg.get("ema_lenta", 21))),
         "usar_filtro_ema": _env_bool("IQ_EMA_FILTER", bool(file_cfg.get("usar_filtro_ema", True))),
-        # Confluencia multi-tempo
         "micro_mult": _env_int("IQ_MICRO_MULT", int(file_cfg.get("micro_mult", 5))),
         "macro_mult": _env_int("IQ_MACRO_MULT", int(file_cfg.get("macro_mult", 15))),
         "exigir_confluencia": _env_bool("IQ_CONFLUENCIA", bool(file_cfg.get("exigir_confluencia", True))),
+        # qualidade do sinal
+        "min_corpo_pct": _env_float("IQ_MIN_BODY_PCT", float(file_cfg.get("min_corpo_pct", 0.40))),
+        "max_losses_pause": _env_int("IQ_MAX_LOSSES_PAUSE", int(file_cfg.get("max_losses_pause", 2))),
+        "pause_minutes": _env_int("IQ_PAUSE_MINUTES", int(file_cfg.get("pause_minutes", 20))),
+        "usar_filtro_horario": _env_bool("IQ_HOUR_FILTER", bool(file_cfg.get("usar_filtro_horario", False))),
+        "hora_inicio": _env_int("IQ_HOUR_START", int(file_cfg.get("hora_inicio", 9))),
+        "hora_fim": _env_int("IQ_HOUR_END", int(file_cfg.get("hora_fim", 18))),
     }
 
     if not settings["email"] or not settings["senha"]:

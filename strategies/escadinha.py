@@ -1,4 +1,4 @@
-"""Estrategia Escadinha com confluencia Nano + Micro + Macro."""
+"""Estrategia Escadinha com confluencia + filtros de qualidade."""
 
 from __future__ import annotations
 
@@ -21,6 +21,7 @@ class EscadinhaStrategy(BaseStrategy):
         micro_mult: int = 5,
         macro_mult: int = 15,
         exigir_confluencia: bool = True,
+        min_corpo_pct: float = 0.40,
         **kwargs,
     ):
         super().__init__(api, **kwargs)
@@ -31,6 +32,8 @@ class EscadinhaStrategy(BaseStrategy):
         self.micro_mult = max(2, int(micro_mult))
         self.macro_mult = max(self.micro_mult + 1, int(macro_mult))
         self.exigir_confluencia = bool(exigir_confluencia)
+        # corpo minimo relativo a amplitude da vela (0.40 = 40%)
+        self.min_corpo_pct = max(0.0, min(0.9, float(min_corpo_pct)))
 
     def _candle_color(self, candle: dict) -> str:
         if candle["open"] < candle["close"]:
@@ -38,6 +41,24 @@ class EscadinhaStrategy(BaseStrategy):
         if candle["open"] > candle["close"]:
             return "vermelha"
         return "doji"
+
+    def _body_ratio(self, candle: dict) -> float:
+        high = float(candle.get("max", candle.get("high", 0)) or 0)
+        low = float(candle.get("min", candle.get("low", 0)) or 0)
+        open_ = float(candle["open"])
+        close = float(candle["close"])
+        amplitude = abs(high - low)
+        if amplitude <= 0:
+            return 0.0
+        return abs(close - open_) / amplitude
+
+    def _strong_bodies(self, candles: list) -> bool:
+        if self.min_corpo_pct <= 0:
+            return True
+        for c in candles:
+            if self._body_ratio(c) < self.min_corpo_pct:
+                return False
+        return True
 
     def _ema(self, closes, period: int):
         if len(closes) < period:
@@ -58,7 +79,7 @@ class EscadinhaStrategy(BaseStrategy):
         return candles
 
     def _trend_ema(self, ativo: str, timeframe: int) -> Optional[str]:
-        qnt = self.ema_lenta + 10
+        qnt = self.ema_lenta + 15
         candles = self._get_candles(ativo, timeframe, qnt)
         if not candles:
             return None
@@ -69,18 +90,20 @@ class EscadinhaStrategy(BaseStrategy):
         if ema_f is None or ema_s is None:
             return None
 
+        # exige separacao minima entre EMAs (evita lateral)
         diff = abs(ema_f - ema_s) / max(abs(ema_s), 1e-9)
-        if diff < 0.00005:
+        if diff < 0.00008:
             return None
 
-        if ema_f > ema_s:
+        last = closes[-1]
+        if ema_f > ema_s and last >= ema_f:
             return "call"
-        if ema_f < ema_s:
+        if ema_f < ema_s and last <= ema_f:
             return "put"
         return None
 
     def _nano_escadinha(self, ativo: str, timeframe: int) -> Optional[str]:
-        qnt = max(self.min_velas + 5, self.ema_lenta + 10)
+        qnt = max(self.min_velas + 5, self.ema_lenta + 15)
         candles = self._get_candles(ativo, timeframe, qnt)
         if not candles or len(candles) < self.min_velas:
             return None
@@ -90,13 +113,20 @@ class EscadinhaStrategy(BaseStrategy):
         if "doji" in colors:
             return None
 
+        # escadinha fraca (pavio grande / corpo pequeno) descartada
+        if not self._strong_bodies(recent):
+            return None
+
         closes = [c["close"] for c in candles]
+        last = closes[-1]
 
         if all(c == "verde" for c in colors):
             if self.usar_filtro_ema:
                 ema_f = self._ema(closes, self.ema_rapida)
                 ema_s = self._ema(closes, self.ema_lenta)
-                if ema_f is None or ema_s is None or not (ema_f > ema_s):
+                if ema_f is None or ema_s is None:
+                    return None
+                if not (ema_f > ema_s and last >= ema_f):
                     return None
             return "call"
 
@@ -104,14 +134,15 @@ class EscadinhaStrategy(BaseStrategy):
             if self.usar_filtro_ema:
                 ema_f = self._ema(closes, self.ema_rapida)
                 ema_s = self._ema(closes, self.ema_lenta)
-                if ema_f is None or ema_s is None or not (ema_f < ema_s):
+                if ema_f is None or ema_s is None:
+                    return None
+                if not (ema_f < ema_s and last <= ema_f):
                     return None
             return "put"
 
         return None
 
     def diagnose(self, ativo: str, timeframe: int = 60) -> Dict[str, Any]:
-        """Status de cada camada para a UI Live."""
         tf_micro = timeframe * self.micro_mult
         tf_macro = timeframe * self.macro_mult
 
@@ -150,6 +181,7 @@ class EscadinhaStrategy(BaseStrategy):
             "aligned": aligned,
             "direction": (direction or "").upper() or None,
             "exigir_confluencia": self.exigir_confluencia,
+            "min_corpo_pct": self.min_corpo_pct,
         }
 
     def analyze(self, ativo: str, timeframe: int = 60) -> Optional[Tuple[str, str]]:
@@ -163,6 +195,6 @@ class EscadinhaStrategy(BaseStrategy):
         ma = diag["macro"]
         motivo = (
             f"Nano {n['direction']} | Micro TF{mi['tf']}s={mi['direction']} "
-            f"| Macro TF{ma['tf']}s={ma['direction']}"
+            f"| Macro TF{ma['tf']}s={ma['direction']} | corpo>={int(self.min_corpo_pct*100)}%"
         )
         return direcao, motivo
