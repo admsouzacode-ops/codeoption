@@ -39,7 +39,12 @@ class AppState:
         self.micro_mult = 5
         self.macro_mult = 15
         self.exigir_confluencia = True
-        # padrao seguro: desligado ate hidratar do ENV / UI
+        self.min_corpo_pct = 0.40
+        self.max_losses_pause = 2
+        self.pause_minutes = 20
+        self.usar_filtro_horario = False
+        self.hora_inicio = 9
+        self.hora_fim = 18
         self.usar_martingale = False
         self.niveis_martingale = 2
         self.fator_martingale = 2.0
@@ -59,7 +64,6 @@ class AppState:
         self._hydrated = False
 
     def hydrate_from_settings(self, cfg: Dict[str, Any]) -> None:
-        """Carrega padroes do ENV uma vez (ou sobrescreve no boot)."""
         with self.lock:
             self.account = (cfg.get("tipo_conta") or self.account or "PRACTICE").upper()
             self.strategy = cfg.get("estrategia") or self.strategy
@@ -74,6 +78,12 @@ class AppState:
             self.micro_mult = int(cfg.get("micro_mult") or self.micro_mult)
             self.macro_mult = int(cfg.get("macro_mult") or self.macro_mult)
             self.exigir_confluencia = bool(cfg.get("exigir_confluencia", self.exigir_confluencia))
+            self.min_corpo_pct = float(cfg.get("min_corpo_pct", self.min_corpo_pct))
+            self.max_losses_pause = int(cfg.get("max_losses_pause", self.max_losses_pause))
+            self.pause_minutes = int(cfg.get("pause_minutes", self.pause_minutes))
+            self.usar_filtro_horario = bool(cfg.get("usar_filtro_horario", self.usar_filtro_horario))
+            self.hora_inicio = int(cfg.get("hora_inicio", self.hora_inicio))
+            self.hora_fim = int(cfg.get("hora_fim", self.hora_fim))
             self.usar_martingale = bool(cfg.get("usar_martingale", False))
             self.niveis_martingale = int(cfg.get("niveis_martingale") or self.niveis_martingale)
             self.fator_martingale = float(cfg.get("fator_martingale") or self.fator_martingale)
@@ -106,6 +116,12 @@ class AppState:
                 "micro_mult": self.micro_mult,
                 "macro_mult": self.macro_mult,
                 "exigir_confluencia": self.exigir_confluencia,
+                "min_corpo_pct": self.min_corpo_pct,
+                "max_losses_pause": self.max_losses_pause,
+                "pause_minutes": self.pause_minutes,
+                "usar_filtro_horario": self.usar_filtro_horario,
+                "hora_inicio": self.hora_inicio,
+                "hora_fim": self.hora_fim,
                 "usar_martingale": bool(self.usar_martingale),
                 "niveis_martingale": self.niveis_martingale,
                 "fator_martingale": self.fator_martingale,

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, Optional, Tuple
 from zoneinfo import ZoneInfo
 
@@ -15,7 +15,7 @@ from core.risk import RiskManager
 from core.settings import load_settings
 from strategies import get_strategy
 
-from api.state import state, time_br
+from api.state import state, time_br, now_br
 
 TZ = ZoneInfo("America/Sao_Paulo")
 
@@ -97,6 +97,23 @@ class BotRunner:
                 state.stop_win = cfg["stop_win"]
             if not state.stop_loss:
                 state.stop_loss = cfg["stop_loss"]
+            state.min_corpo_pct = float(getattr(state, "min_corpo_pct", None) or cfg.get("min_corpo_pct", 0.40))
+            state.max_losses_pause = int(getattr(state, "max_losses_pause", None) or cfg.get("max_losses_pause", 2))
+            state.pause_minutes = int(getattr(state, "pause_minutes", None) or cfg.get("pause_minutes", 20))
+            state.usar_filtro_horario = bool(getattr(state, "usar_filtro_horario", cfg.get("usar_filtro_horario", False)))
+            state.hora_inicio = int(getattr(state, "hora_inicio", None) or cfg.get("hora_inicio", 9))
+            state.hora_fim = int(getattr(state, "hora_fim", None) or cfg.get("hora_fim", 18))
+
+    def _in_allowed_hours(self) -> bool:
+        if not getattr(state, "usar_filtro_horario", False):
+            return True
+        hour = now_br().hour
+        start = int(state.hora_inicio)
+        end = int(state.hora_fim)
+        if start <= end:
+            return start <= hour < end
+        # janela que cruza meia-noite
+        return hour >= start or hour < end
 
     def _loop(self) -> None:
         try:
@@ -154,9 +171,32 @@ class BotRunner:
         risk = RiskManager(stop_win, stop_loss, state.currency)
         self._risk = risk
         ultimo_sinal_ts = 0.0
+        consecutive_losses = 0
+        pause_until: Optional[datetime] = None
 
         while not self._stop.is_set() and risk.can_trade:
             try:
+                # pausa apos losses seguidos
+                if pause_until is not None:
+                    now = now_br()
+                    if now < pause_until:
+                        remain = int((pause_until - now).total_seconds() // 60) + 1
+                        with state.lock:
+                            state.last_message = f"Pausa apos losses — volta em ~{remain} min"
+                        time.sleep(5)
+                        continue
+                    pause_until = None
+                    consecutive_losses = 0
+
+                if not self._in_allowed_hours():
+                    with state.lock:
+                        state.last_message = (
+                            f"Fora do horario permitido "
+                            f"({state.hora_inicio}h–{state.hora_fim}h BR)"
+                        )
+                    time.sleep(15)
+                    continue
+
                 ativo = (state.asset or cfg["ativo"]).upper()
                 timeframe = int(state.timeframe or cfg["timeframe"])
                 valor_entrada = float(state.valor_entrada or cfg["valor_entrada"])
@@ -177,7 +217,6 @@ class BotRunner:
                 if not risk.can_trade:
                     break
 
-                # Martingale OFF => niveis 0 (uma unica entrada)
                 mg_niveis = int(state.niveis_martingale if state.usar_martingale else 0)
 
                 orders = OrderManager(
@@ -200,6 +239,7 @@ class BotRunner:
                     micro_mult=int(state.micro_mult or 5),
                     macro_mult=int(state.macro_mult or 15),
                     exigir_confluencia=bool(state.exigir_confluencia),
+                    min_corpo_pct=float(getattr(state, "min_corpo_pct", 0.40)),
                 )
 
                 if not ensure_connected(api, cfg["email"], cfg["senha"]):
@@ -269,12 +309,20 @@ class BotRunner:
                         }
                     )
 
+                    if resultado < 0:
+                        consecutive_losses += 1
+                        max_pause = int(getattr(state, "max_losses_pause", 2) or 0)
+                        pause_min = int(getattr(state, "pause_minutes", 20) or 0)
+                        if max_pause > 0 and consecutive_losses >= max_pause and pause_min > 0:
+                            pause_until = now_br() + timedelta(minutes=pause_min)
+                    else:
+                        consecutive_losses = 0
+
                     with state.lock:
                         state.lucro_dia = risk.lucro_total
                         state.last_signal = None
                         state.balance = float(api.get_balance())
 
-                        # PARA na hora se bateu stop
                         if not risk.can_trade:
                             if risk.stop_reason == "STOP_WIN":
                                 state.last_message = (
@@ -287,6 +335,10 @@ class BotRunner:
                             else:
                                 state.last_message = "Limite de risco — bot parado"
                             state.bot_running = False
+                        elif pause_until is not None:
+                            state.last_message = (
+                                f"{consecutive_losses} losses seguidos — pausa {state.pause_minutes} min"
+                            )
                         else:
                             state.last_message = (
                                 f"Monitorando... | P/L sessao {risk.lucro_total:+.2f}"
