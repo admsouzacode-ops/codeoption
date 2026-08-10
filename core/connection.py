@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Tuple
+import threading
+from typing import Any, Tuple
 
 from iqoptionapi.stable_api import IQ_Option
 
@@ -11,7 +12,40 @@ class IQConnectionError(Exception):
     """Falha ao conectar na IQ Option."""
 
 
-def connect_iq(email: str, senha: str, tipo_conta: str = "PRACTICE") -> Tuple[IQ_Option, str]:
+def _connect_with_timeout(api: IQ_Option, timeout: float = 25.0) -> Tuple[bool, Any]:
+    """Executa api.connect() com timeout para nao travar o bot."""
+    result: dict = {"done": False, "check": False, "reason": "timeout"}
+
+    def worker() -> None:
+        try:
+            check, reason = api.connect()
+            result["check"] = check
+            result["reason"] = reason
+        except Exception as exc:
+            result["check"] = False
+            result["reason"] = f"exception: {exc}"
+        finally:
+            result["done"] = True
+
+    t = threading.Thread(target=worker, daemon=True)
+    t.start()
+    t.join(timeout=timeout)
+
+    if not result["done"]:
+        return False, (
+            f"Timeout apos {int(timeout)}s. "
+            f"Servidor pode estar bloqueado pela IQ (IP de datacenter/VPS)."
+        )
+
+    return bool(result["check"]), result["reason"]
+
+
+def connect_iq(
+    email: str,
+    senha: str,
+    tipo_conta: str = "PRACTICE",
+    timeout: float = 25.0,
+) -> Tuple[IQ_Option, str]:
     """
     Conecta na IQ Option e seleciona a conta (PRACTICE/REAL).
 
@@ -21,22 +55,21 @@ def connect_iq(email: str, senha: str, tipo_conta: str = "PRACTICE") -> Tuple[IQ
     if not email or not senha:
         raise IQConnectionError("IQ_EMAIL / IQ_PASSWORD nao configurados no environment.")
 
-    print(f"[connect] conectando como {email[:3]}***...")
+    print(f"[connect] conectando como {email[:3]}*** (timeout={timeout}s)...")
     api = IQ_Option(email, senha)
 
-    try:
-        check, reason = api.connect()
-    except Exception as exc:
-        raise IQConnectionError(f"Excecao no connect(): {exc}") from exc
-
+    check, reason = _connect_with_timeout(api, timeout=timeout)
     print(f"[connect] check={check} reason={reason}")
 
     if not check:
         reason_s = str(reason)
-        if "invalid_credentials" in reason_s.lower():
+        low = reason_s.lower()
+        if "invalid_credentials" in low:
             raise IQConnectionError("Email ou senha invalidos (IQ_EMAIL / IQ_PASSWORD).")
-        if reason_s == "2FA":
+        if reason_s == "2FA" or "2fa" in low:
             raise IQConnectionError("Conta com 2FA. Desative 2FA ou use conta sem 2FA.")
+        if "timeout" in low:
+            raise IQConnectionError(reason_s)
         raise IQConnectionError(f"Falha na conexao IQ Option: {reason}")
 
     tipo_conta = (tipo_conta or "PRACTICE").upper()
@@ -48,11 +81,10 @@ def connect_iq(email: str, senha: str, tipo_conta: str = "PRACTICE") -> Tuple[IQ
     except Exception as exc:
         print(f"[connect] aviso change_balance: {exc}")
 
-    # NAO chama get_all_open_time aqui (trava). Atualiza opcodes leve.
     try:
         api.update_ACTIVES_OPCODE()
-    except Exception as exc:
-        print(f"[connect] aviso update_ACTIVES_OPCODE: {exc}")
+    except Exception as exp:
+        print(f"[connect] aviso update_ACTIVES_OPCODE: {exp}")
 
     try:
         saldo = float(api.get_balance())
@@ -73,12 +105,7 @@ def ensure_connected(api: IQ_Option, email: str, senha: str) -> bool:
         pass
 
     print("[connect] conexao perdida, reconectando...")
-    try:
-        check, reason = api.connect()
-    except Exception as exc:
-        print(f"[connect] falha reconectar: {exc}")
-        return False
-
+    check, reason = _connect_with_timeout(api, timeout=20.0)
     if check:
         try:
             api.update_ACTIVES_OPCODE()
