@@ -36,7 +36,6 @@ class BotRunner:
             self._risk.update_stops(stop_win, stop_loss)
 
     def change_account(self, account: str) -> Tuple[bool, str]:
-        """Troca PRACTICE/REAL na sessao atual (se conectado)."""
         account = (account or "PRACTICE").upper()
         if account not in ("PRACTICE", "REAL"):
             return False, "Conta invalida"
@@ -81,7 +80,6 @@ class BotRunner:
             if not state.asset:
                 state.asset = cfg["ativo"]
             state.strategy = cfg["estrategia"]
-            # so preenche conta se ainda nao foi escolhida na UI
             if not state.account or state.account not in ("PRACTICE", "REAL"):
                 state.account = (cfg.get("tipo_conta") or "PRACTICE").upper()
             if not state.timeframe:
@@ -124,6 +122,7 @@ class BotRunner:
             state.account = conta
             state.stop_win = stop_win
             state.stop_loss = stop_loss
+            state.lucro_dia = 0.0
             state.started_at = datetime.now(TZ).isoformat()
             state.last_signal = None
             state.confluence = None
@@ -139,7 +138,10 @@ class BotRunner:
                 state.user_name = str(perfil.get("name", ""))
                 state.balance = float(api.get_balance())
                 state.account = conta
-                state.last_message = f"Conectado ({conta}). Monitorando..."
+                state.last_message = (
+                    f"Conectado ({conta}). "
+                    f"Stop Win {stop_win:.0f} / Stop Loss {stop_loss:.0f}"
+                )
         except Exception as exc:
             with state.lock:
                 state.connected = False
@@ -160,7 +162,6 @@ class BotRunner:
                 valor_entrada = float(state.valor_entrada or cfg["valor_entrada"])
                 expiracao = int(state.expiracao or cfg["expiracao"])
 
-                # se a UI trocou a conta, aplica
                 desired = (state.account or conta).upper()
                 if desired in ("PRACTICE", "REAL") and desired != conta:
                     try:
@@ -173,12 +174,17 @@ class BotRunner:
                         pass
 
                 risk.update_stops(state.stop_win, state.stop_loss)
+                if not risk.can_trade:
+                    break
+
+                # Martingale OFF => niveis 0 (uma unica entrada)
+                mg_niveis = int(state.niveis_martingale if state.usar_martingale else 0)
 
                 orders = OrderManager(
                     api=api,
                     risk=risk,
                     tipo=cfg["tipo"],
-                    martingale_niveis=int(state.niveis_martingale if state.usar_martingale else 0),
+                    martingale_niveis=mg_niveis,
                     martingale_fator=float(state.fator_martingale or cfg["fator_martingale"]),
                     usar_soros=bool(state.usar_soros),
                     niveis_soros=int(state.niveis_soros or 0),
@@ -208,6 +214,7 @@ class BotRunner:
                     state.balance = float(api.get_balance())
                     state.asset = ativo
                     state.account = conta
+                    state.lucro_dia = risk.lucro_total
 
                 if hasattr(strategy, "diagnose"):
                     try:
@@ -221,6 +228,9 @@ class BotRunner:
                 now_ts = time.time()
 
                 if result and (now_ts - ultimo_sinal_ts) > timeframe:
+                    if not risk.can_trade:
+                        break
+
                     direcao, motivo = result
                     with state.lock:
                         state.last_signal = {
@@ -236,7 +246,7 @@ class BotRunner:
                     espera = max(1, timeframe - server_now.second)
                     time.sleep(espera + 1)
 
-                    if self._stop.is_set():
+                    if self._stop.is_set() or not risk.can_trade:
                         break
 
                     lucro_antes = risk.lucro_total
@@ -262,14 +272,38 @@ class BotRunner:
                     with state.lock:
                         state.lucro_dia = risk.lucro_total
                         state.last_signal = None
-                        state.last_message = "Monitorando..."
                         state.balance = float(api.get_balance())
 
+                        # PARA na hora se bateu stop
+                        if not risk.can_trade:
+                            if risk.stop_reason == "STOP_WIN":
+                                state.last_message = (
+                                    f"Stop Win atingido ({risk.lucro_total:+.2f}) — bot parado"
+                                )
+                            elif risk.stop_reason == "STOP_LOSS":
+                                state.last_message = (
+                                    f"Stop Loss atingido ({risk.lucro_total:+.2f}) — bot parado"
+                                )
+                            else:
+                                state.last_message = "Limite de risco — bot parado"
+                            state.bot_running = False
+                        else:
+                            state.last_message = (
+                                f"Monitorando... | P/L sessao {risk.lucro_total:+.2f}"
+                            )
+
                     ultimo_sinal_ts = time.time()
+
+                    if not risk.can_trade:
+                        break
                 else:
                     with state.lock:
-                        if state.last_signal is None:
-                            state.last_message = f"Monitorando {ativo}..."
+                        if state.last_signal is None and risk.can_trade:
+                            state.last_message = (
+                                f"Monitorando {ativo}... | "
+                                f"P/L {risk.lucro_total:+.2f} | "
+                                f"SW {state.stop_win:.0f} / SL {state.stop_loss:.0f}"
+                            )
                     time.sleep(1)
 
             except Exception as exc:
@@ -282,10 +316,16 @@ class BotRunner:
             state.bot_running = False
             state.last_signal = None
             if risk.stop_reason == "STOP_WIN":
-                state.last_message = "Stop Win atingido — bot parado"
+                state.last_message = (
+                    f"Stop Win atingido ({risk.lucro_total:+.2f}) — bot parado"
+                )
             elif risk.stop_reason == "STOP_LOSS":
-                state.last_message = "Stop Loss atingido — bot parado"
-            elif not state.last_message.startswith("Bot parado"):
+                state.last_message = (
+                    f"Stop Loss atingido ({risk.lucro_total:+.2f}) — bot parado"
+                )
+            elif not str(state.last_message).startswith("Bot parado") and not str(
+                state.last_message
+            ).startswith("Stop "):
                 state.last_message = "Bot finalizado"
 
         self._risk = None
