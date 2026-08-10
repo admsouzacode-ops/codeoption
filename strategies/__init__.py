@@ -1,8 +1,10 @@
 from .base import BaseStrategy
 from .escadinha import EscadinhaStrategy
+from .trend_pullback import TrendPullbackStrategy
 
 STRATEGY_REGISTRY = {
     "escadinha": EscadinhaStrategy,
+    "trend_pullback": TrendPullbackStrategy,
 }
 
 
@@ -14,4 +16,10 @@ def get_strategy(name: str, api, **kwargs):
     return STRATEGY_REGISTRY[key](api, **kwargs)
 
 
-__all__ = ["BaseStrategy", "EscadinhaStrategy", "STRATEGY_REGISTRY", "get_strategy"]
+__all__ = [
+    "BaseStrategy",
+    "EscadinhaStrategy",
+    "TrendPullbackStrategy",
+    "STRATEGY_REGISTRY",
+    "get_strategy",
+]
