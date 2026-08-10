@@ -1,9 +1,15 @@
-"""Gerenciamento de ordens, martingale e soros."""
+"""Gerenciamento de ordens, martingale e soros.
+
+Padrao do bot de referencia (iq_bot.py):
+  1) tenta BINARY/TURBO (api.buy)
+  2) se falhar, tenta DIGITAL (buy_digital_spot_v2)
+  3) tenta variantes do ativo: EURUSD, EURUSD-op, EURUSD-OTC
+"""
 
 from __future__ import annotations
 
 import time
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from .risk import RiskManager
 
@@ -18,50 +24,36 @@ def _get_actives_map() -> Dict:
 
 
 def resolve_active_name(ativo: str, actives: Optional[Dict] = None) -> Optional[str]:
-    """
-    Resolve o nome exato no dicionario ACTIVES da IQ Option.
-
-    A API usa chaves sensiveis a maiusculas:
-      EURUSD, EURUSD-OTC, EURUSD-op
-    (nao EURUSD-OP)
-    """
+    """Resolve nome no ACTIVES preservando EURUSD-op (op minusculo)."""
     raw = (ativo or "").strip()
     if not raw:
         return None
 
     actives = actives if actives is not None else _get_actives_map()
     if not actives:
-        return raw
+        upper = raw.upper()
+        if upper.endswith("-OP"):
+            return upper[:-3] + "-op"
+        return upper
 
-    # match exato
     if raw in actives:
         return raw
 
-    upper = raw.upper()
-    # mapa case-insensitive: UPPER -> chave real
     upper_map = {str(k).upper(): k for k in actives.keys()}
-
+    upper = raw.upper()
     if upper in upper_map:
         return upper_map[upper]
 
-    # candidatos comuns
     base = upper.replace("-OTC", "").replace("-OP", "")
-    candidates = [
-        base,
-        f"{base}-OTC",
-        f"{base}-op",  # forma correta na API
-        f"{base}-OP",
-        raw,
-        upper,
-    ]
-
-    for cand in candidates:
+    for cand in (base, f"{base}-OTC", f"{base}-op", f"{base}-OP", raw, upper):
         if cand in actives:
             return cand
         if cand.upper() in upper_map:
             return upper_map[cand.upper()]
 
-    return None
+    if upper.endswith("-OP"):
+        return upper[:-3] + "-op"
+    return upper
 
 
 class OrderManager:
@@ -69,7 +61,7 @@ class OrderManager:
         self,
         api,
         risk: RiskManager,
-        tipo: str = "binarias",
+        tipo: str = "auto",
         martingale_niveis: int = 0,
         martingale_fator: float = 2.0,
         usar_soros: bool = False,
@@ -78,7 +70,7 @@ class OrderManager:
     ):
         self.api = api
         self.risk = risk
-        self.tipo = (tipo or "binarias").lower()
+        self.tipo = (tipo or "auto").lower()
         self.martingale_niveis = max(0, int(martingale_niveis))
         self.martingale_fator = float(martingale_fator)
         self.usar_soros = bool(usar_soros)
@@ -89,17 +81,15 @@ class OrderManager:
         self.valor_soros = 0.0
         self.lucro_op_atual = 0.0
         self.last_error = ""
+        self.last_tipo_usado = ""
 
     def _resolve_entrada(self, valor_base: float) -> float:
         if not self.usar_soros:
             return float(valor_base)
-
         if self.nivel_soros == 0:
             return float(valor_base)
-
         if 1 <= self.nivel_soros <= self.niveis_soros and self.valor_soros > 0:
             return float(valor_base) + float(self.valor_soros)
-
         self.lucro_op_atual = 0.0
         self.valor_soros = 0.0
         self.nivel_soros = 0
@@ -115,81 +105,99 @@ class OrderManager:
         except Exception:
             pass
 
-    def _is_open(self, ativo: str) -> Tuple[bool, str]:
+    def _candidates(self, ativo: str) -> List[str]:
+        actives = _get_actives_map()
+        resolved = resolve_active_name(ativo, actives) or (ativo or "").strip()
+        base = resolved.upper().replace("-OTC", "").replace("-OP", "")
+        out: List[str] = []
+        for c in (resolved, base, f"{base}-op", f"{base}-OTC", ativo):
+            r = resolve_active_name(c, actives) or c
+            if r and r not in out:
+                out.append(r)
+        return out
+
+    def _try_binary(self, ativo: str, entrada: float, direcao: str, expiracao: int):
+        print(f"  [1/2] BINARY/TURBO buy({entrada}, {ativo}, {direcao}, {expiracao})")
         try:
-            open_time = self.api.get_all_open_time()
+            check, order_id = self.api.buy(entrada, ativo, direcao, expiracao)
+            print(f"  binary -> check={check}, id={order_id}")
+            return bool(check), order_id
+        except KeyError as exc:
+            msg = f"Opcode ausente '{ativo}': {exc}"
+            print(f"  binary KeyError: {msg}")
+            return False, msg
         except Exception as exc:
-            return True, f"nao checou open_time: {exc}"
+            print(f"  binary Exception: {exc}")
+            return False, str(exc)
 
-        # open_time keys podem vir com case diferente
-        for market in ("turbo", "binary"):
-            bucket = open_time.get(market) or {}
-            # match case-insensitive
-            for name, info in bucket.items():
-                if str(name).upper() == str(ativo).upper() and isinstance(info, dict) and info.get("open"):
-                    return True, market
-
-        return False, "fechado"
+    def _try_digital(self, ativo: str, entrada: float, direcao: str, expiracao: int):
+        print(f"  [2/2] DIGITAL buy_digital_spot_v2({ativo}, {entrada}, {direcao}, {expiracao})")
+        try:
+            check, order_id = self.api.buy_digital_spot_v2(ativo, entrada, direcao, expiracao)
+            print(f"  digital -> check={check}, id={order_id}")
+            return bool(check), order_id
+        except Exception as exc:
+            print(f"  digital Exception: {exc}")
+            return False, str(exc)
 
     def _open_order(self, ativo: str, entrada: float, direcao: str, expiracao: int):
+        """Retorna (ok, order_id_ou_erro, tipo_usado)."""
         self._refresh_actives()
-        actives = _get_actives_map()
-
-        resolved = resolve_active_name(ativo, actives)
-        if not resolved:
-            self.last_error = (
-                f"Ativo '{ativo}' nao encontrado na API. "
-                f"Tente EURUSD, EURUSD-OTC ou EURUSD-op."
-            )
-            print(self.last_error)
-            return False, self.last_error
-
-        aberto, market = self._is_open(resolved)
-        if not aberto:
-            # tenta alternativas do mesmo par
-            base = resolved.upper().replace("-OTC", "").replace("-OP", "")
-            for alt in (base, f"{base}-OTC", f"{base}-op"):
-                alt_resolved = resolve_active_name(alt, actives)
-                if not alt_resolved or alt_resolved == resolved:
-                    continue
-                ok2, market2 = self._is_open(alt_resolved)
-                if ok2:
-                    resolved = alt_resolved
-                    market = market2
-                    aberto = True
-                    break
-
-        if not aberto:
-            self.last_error = (
-                f"Ativo '{resolved}' fechado agora. "
-                f"Mercado normal so abre em horario comercial."
-            )
-            print(self.last_error)
-            return False, self.last_error
 
         direcao = (direcao or "call").lower()
         if direcao not in ("call", "put"):
             direcao = "call"
 
-        print(f">> Abrindo ordem em '{resolved}' (origem '{ativo}', market={market})")
+        force_digital = self.tipo.startswith("digital")
+        force_binary = self.tipo.startswith("binar") or self.tipo.startswith("turbo")
+        # "auto" / "binarias" / vazio => tenta binary depois digital
 
-        if self.tipo.startswith("digital"):
-            check, order_id = self.api.buy_digital_spot_v2(
-                resolved, entrada, direcao, expiracao
-            )
-            return check, order_id
+        errors: List[str] = []
+        for name in self._candidates(ativo):
+            print(f">> Tentando ativo '{name}' (origem '{ativo}')")
 
-        try:
-            check, order_id = self.api.buy(entrada, resolved, direcao, expiracao)
-            return check, order_id
-        except KeyError:
-            self.last_error = f"Opcode ausente para '{resolved}'."
-            print(self.last_error)
-            return False, self.last_error
-        except Exception as exc:
-            self.last_error = str(exc)
-            print(f"Erro buy: {exc}")
-            return False, self.last_error
+            if not force_digital:
+                check, order_id = self._try_binary(name, entrada, direcao, expiracao)
+                if check:
+                    self.last_tipo_usado = "binary"
+                    self.last_error = ""
+                    return True, order_id, "binary"
+                errors.append(f"binary/{name}: {order_id}")
+
+            if not force_binary:
+                check, order_id = self._try_digital(name, entrada, direcao, expiracao)
+                if check:
+                    self.last_tipo_usado = "digital"
+                    self.last_error = ""
+                    return True, order_id, "digital"
+                errors.append(f"digital/{name}: {order_id}")
+
+        self.last_error = " | ".join(str(e) for e in errors[-6:]) or "Falha ao abrir ordem"
+        print(f"Falha em todas tentativas: {self.last_error}")
+        return False, self.last_error, ""
+
+    def _wait_result(self, order_id, tipo_usado: str, expiracao: int) -> Optional[float]:
+        timeout = max(90, (int(expiracao) + 2) * 60)
+        start = time.time()
+        while True:
+            time.sleep(0.4)
+            try:
+                if tipo_usado == "digital":
+                    status, resultado = self.api.check_win_digital_v2(order_id)
+                else:
+                    status, resultado = self.api.check_win_v4(order_id)
+            except Exception as exc:
+                print(f"  check_win erro: {exc}")
+                if time.time() - start > timeout:
+                    return None
+                continue
+
+            if status:
+                return float(resultado or 0)
+
+            if time.time() - start > timeout:
+                print("  Timeout aguardando resultado")
+                return None
 
     def execute(
         self,
@@ -204,12 +212,15 @@ class OrderManager:
         entrada = self._resolve_entrada(valor_entrada)
         resultado_final = 0.0
         self.last_error = ""
+        self.last_tipo_usado = ""
 
         for i in range(self.martingale_niveis + 1):
             if not self.risk.can_trade:
                 break
 
-            check, order_id = self._open_order(ativo, entrada, direcao, expiracao)
+            check, order_id, tipo_usado = self._open_order(
+                ativo, entrada, direcao, expiracao
+            )
 
             if not check:
                 msg = order_id if isinstance(order_id, str) else self.last_error
@@ -219,39 +230,38 @@ class OrderManager:
 
             label = "entrada" if i == 0 else f"gale {i}"
             print(
-                f">> Ordem aberta ({label}) | {ativo} | {direcao.upper()} | "
-                f"{self.currency}{entrada:.2f} | id={order_id}"
+                f">> Ordem aberta ({label}/{tipo_usado}) | {ativo} | "
+                f"{direcao.upper()} | {self.currency}{entrada:.2f} | id={order_id}"
             )
 
-            while True:
-                time.sleep(0.25)
-                if self.tipo.startswith("digital"):
-                    status, resultado = self.api.check_win_digital_v2(order_id)
-                else:
-                    status, resultado = self.api.check_win_v4(order_id)
-
-                if not status:
-                    continue
-
-                resultado = float(resultado or 0)
-                resultado_final = resultado
-                self.risk.register(resultado)
-
-                if self.usar_soros:
-                    self.valor_soros += resultado
-                    self.lucro_op_atual += resultado
-
-                if resultado > 0:
-                    print(f">> WIN ({label}) | {resultado:+.2f} | Total: {self.risk.lucro_total:.2f}")
-                elif resultado == 0:
-                    print(f">> EMPATE ({label}) | Total: {self.risk.lucro_total:.2f}")
-                else:
-                    print(f">> LOSS ({label}) | {resultado:+.2f} | Total: {self.risk.lucro_total:.2f}")
-
-                if resultado <= 0 and i + 1 <= self.martingale_niveis:
-                    if resultado < 0:
-                        entrada = round(abs(float(entrada) * self.martingale_fator), 2)
+            resultado = self._wait_result(order_id, tipo_usado, expiracao)
+            if resultado is None:
+                self.last_error = "Timeout aguardando resultado"
                 break
+
+            resultado_final = float(resultado)
+            self.risk.register(resultado_final)
+
+            if self.usar_soros:
+                self.valor_soros += resultado_final
+                self.lucro_op_atual += resultado_final
+
+            if resultado_final > 0:
+                print(
+                    f">> WIN ({label}) | {resultado_final:+.2f} | "
+                    f"Total: {self.risk.lucro_total:.2f}"
+                )
+            elif resultado_final == 0:
+                print(f">> EMPATE ({label}) | Total: {self.risk.lucro_total:.2f}")
+            else:
+                print(
+                    f">> LOSS ({label}) | {resultado_final:+.2f} | "
+                    f"Total: {self.risk.lucro_total:.2f}"
+                )
+
+            if resultado_final <= 0 and i + 1 <= self.martingale_niveis:
+                if resultado_final < 0:
+                    entrada = round(abs(float(entrada) * self.martingale_fator), 2)
 
             if resultado_final > 0:
                 break
