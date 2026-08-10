@@ -112,7 +112,6 @@ class BotRunner:
         end = int(state.hora_fim)
         if start <= end:
             return start <= hour < end
-        # janela que cruza meia-noite
         return hour >= start or hour < end
 
     def _loop(self) -> None:
@@ -176,7 +175,6 @@ class BotRunner:
 
         while not self._stop.is_set() and risk.can_trade:
             try:
-                # pausa apos losses seguidos
                 if pause_until is not None:
                     now = now_br()
                     if now < pause_until:
@@ -297,6 +295,17 @@ class BotRunner:
                         expiracao=expiracao,
                     )
                     resultado = risk.lucro_total - lucro_antes
+                    order_error = getattr(orders, "last_error", "") or ""
+
+                    # falha ao abrir ordem (comum em nao-OTC se fechado/opcode)
+                    if order_error and abs(resultado) < 1e-9:
+                        with state.lock:
+                            state.last_signal = None
+                            state.error = order_error
+                            state.last_message = f"Falha na ordem ({ativo}): {order_error}"
+                        ultimo_sinal_ts = time.time()
+                        time.sleep(2)
+                        continue
 
                     state.add_trade(
                         {
