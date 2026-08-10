@@ -124,6 +124,18 @@
         </div>
 
         <div class="card">
+          <h3>Estratégia</h3>
+          <div class="form-row">
+            <label>Modo de análise</label>
+            <select id="input-strategy">
+              <option value="trend_pullback">Trend Pullback (seletiva)</option>
+              <option value="escadinha">Escadinha</option>
+            </select>
+          </div>
+          <p class="hint">Trend Pullback: tendência M15+M5 + pullback M1 + vela de confirmação. Menos sinais, mais filtro.</p>
+        </div>
+
+        <div class="card">
           <h3>Ativo</h3>
           <div class="form-row">
             <label>Par para monitorar</label>
@@ -147,14 +159,14 @@
         </div>
 
         <div class="card">
-          <h3>Escadinha / Confluência</h3>
-          <div class="form-row"><label>Mín. velas (Nano)</label><input type="number" id="input-min-velas" min="2" step="1" /></div>
+          <h3>Filtros técnicos</h3>
+          <div class="form-row"><label>Mín. velas (Escadinha)</label><input type="number" id="input-min-velas" min="2" step="1" /></div>
           <div class="form-row"><label>EMA rápida</label><input type="number" id="input-ema-fast" min="2" step="1" /></div>
           <div class="form-row"><label>EMA lenta</label><input type="number" id="input-ema-slow" min="3" step="1" /></div>
           <div class="form-row"><label>Micro mult (ex: 5 = M5)</label><input type="number" id="input-micro" min="2" step="1" /></div>
           <div class="form-row"><label>Macro mult (ex: 15 = M15)</label><input type="number" id="input-macro" min="3" step="1" /></div>
           <label class="check-row"><input type="checkbox" id="input-ema-filter" /> Usar filtro EMA</label>
-          <label class="check-row"><input type="checkbox" id="input-confluencia" /> Exigir Nano+Micro+Macro</label>
+          <label class="check-row"><input type="checkbox" id="input-confluencia" /> Exigir Nano+Micro+Macro (Escadinha)</label>
         </div>
 
         <div class="card">
