@@ -30,6 +30,17 @@ def connect_iq(email: str, senha: str, tipo_conta: str = "PRACTICE") -> Tuple[IQ
         tipo_conta = "PRACTICE"
 
     api.change_balance(tipo_conta)
+
+    # Atualiza lista de ativos (essencial para pares nao-OTC)
+    try:
+        api.update_ACTIVES_OPCODE()
+    except Exception as exc:
+        print("Aviso update_ACTIVES_OPCODE:", exc)
+    try:
+        api.get_all_open_time()
+    except Exception as exc:
+        print("Aviso get_all_open_time:", exc)
+
     saldo = api.get_balance()
     status = f"Conectado | Conta: {tipo_conta} | Saldo: {saldo}"
     print(status)
@@ -43,6 +54,11 @@ def ensure_connected(api: IQ_Option, email: str, senha: str) -> bool:
     print("Conexao perdida. Tentando reconectar...")
     check, reason = api.connect()
     if check:
+        try:
+            api.update_ACTIVES_OPCODE()
+            api.get_all_open_time()
+        except Exception:
+            pass
         print("Reconectado com sucesso.")
         return True
     print("Falha ao reconectar:", reason)
